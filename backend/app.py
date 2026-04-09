@@ -880,10 +880,12 @@ def news_by_genre():
 # ── Static frontend ───────────────────────────────────────────
 @app.route("/")
 def serve_landing():
-    try:
+    index_path = os.path.join(FRONTEND_DIR, "landing.html")
+
+    if os.path.exists(index_path):
         return send_from_directory(FRONTEND_DIR, "landing.html")
-    except Exception as e:
-        return "Backend running but frontend not found 🚀"
+
+    return "Backend running 🚀 (frontend not found)"
 
 
 @app.route("/<path:fname>")
