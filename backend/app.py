@@ -463,7 +463,22 @@ def analyze():
 
         text = text[:MAX_TEXT_LENGTH]
         input_mode = (request.form.get("input_mode") or "text").strip()[:24] or "text"
-        result = analyze_news(text)
+        try:
+            result = analyze_news(text)
+        except Exception:
+            # Railway/production resilience: return a safe degraded verdict
+            # instead of hard 500 so frontend doesn't drop to demo mode.
+            logger.exception("analyze_news failed; returning degraded verdict")
+            result = {
+                "label": "UNCERTAIN",
+                "confidence": 52.0,
+                "certainty": "LOW",
+                "reason": "Live verification is temporarily limited. Please retry in a moment.",
+                "articles": [],
+                "scores": {"bert": None, "tfidf": None, "evidence": 0.0, "judge": None},
+                "followup_question": None,
+                "followup_yes_prompt": None,
+            }
 
         payload = {
             "final_label": result["label"],
