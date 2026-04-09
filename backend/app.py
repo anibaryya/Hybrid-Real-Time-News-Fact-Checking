@@ -14,7 +14,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from dotenv import load_dotenv
 load_dotenv()
 
-from ml_model.model import analyze_news
+try:
+    from ml_model.model import analyze_news
+except:
+    def analyze_news(text):
+        return "Model temporarily unavailable"
 
 import database as dbstore
 
