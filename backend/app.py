@@ -20,7 +20,10 @@ except:
     def analyze_news(text):
         return "Model temporarily unavailable"
 
-from backend import database as dbstore
+try:
+    from backend import database as dbstore
+except:
+    dbstore = None
 
 from flask import Flask, request, jsonify, send_from_directory, session, abort
 from flask_cors import CORS
