@@ -5,6 +5,7 @@ import io
 import logging
 import secrets
 import tempfile
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
@@ -178,61 +179,215 @@ except Exception:
     # Routes that require DB will still fail if called, but /api/analyze-news can work.
 
 # ── URL / article text ────────────────────────────────────────
+ARTICLE_NOISE_RE = re.compile(
+    r"(comment|related|recommend|trending|popular|newsletter|subscribe|promo|advert|"
+    r"cookie|consent|social|share|footer|header|nav|menu|sidebar|aside|rail|widget|"
+    r"taboola|outbrain|banner|popup|modal|read-more|most-read|breaking-news|tags|breadcrumb)",
+    re.IGNORECASE,
+)
+ARTICLE_CONTENT_RE = re.compile(
+    r"(article|story|content|post|entry|main|body|text|copy|article-body|story-body|article-content)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "")).strip()
+
+
+def _node_hints(node) -> str:
+    if not node or not getattr(node, "attrs", None):
+        return ""
+    cls = " ".join(node.get("class", []) or [])
+    return f"{node.get('id', '')} {cls}".strip()
+
+
+def _extract_page_title(soup: BeautifulSoup) -> str:
+    og = soup.find("meta", property="og:title")
+    if og and og.get("content"):
+        return _normalize_text(og.get("content"))
+    h1 = soup.find("h1")
+    if h1:
+        title = _normalize_text(h1.get_text(" ", strip=True))
+        if title:
+            return title
+    if soup.title and soup.title.string:
+        return _normalize_text(soup.title.string)
+    return ""
+
+
+def _extract_meta_description(soup: BeautifulSoup) -> str:
+    desc_og = soup.find("meta", property="og:description")
+    if desc_og and desc_og.get("content"):
+        return _normalize_text(desc_og.get("content"))
+    md = soup.find("meta", attrs={"name": "description"})
+    if md and md.get("content"):
+        return _normalize_text(md.get("content"))
+    return ""
+
+
+def _decompose_noise(soup: BeautifulSoup) -> None:
+    for tag in soup(["script", "style", "noscript", "iframe", "svg", "form", "button", "nav", "footer", "aside", "header"]):
+        tag.decompose()
+
+    for node in list(soup.find_all(True)):
+        hints = _node_hints(node)
+        if not hints:
+            continue
+        if ARTICLE_NOISE_RE.search(hints) and not ARTICLE_CONTENT_RE.search(hints):
+            node.decompose()
+
+
+def _has_noisy_ancestor(node, stop_node) -> bool:
+    parent = getattr(node, "parent", None)
+    while parent and parent is not stop_node:
+        hints = _node_hints(parent)
+        if hints and ARTICLE_NOISE_RE.search(hints) and not ARTICLE_CONTENT_RE.search(hints):
+            return True
+        parent = getattr(parent, "parent", None)
+    return False
+
+
+def _dedupe_chunks(chunks: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        text = _normalize_text(chunk)
+        if len(text) < 45:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _extract_paragraphs(node, min_len: int = 60) -> list[str]:
+    chunks: list[str] = []
+    for p in node.find_all("p"):
+        if _has_noisy_ancestor(p, node):
+            continue
+        text = _normalize_text(p.get_text(" ", strip=True))
+        if len(text) < min_len:
+            continue
+        lowered = text.lower()
+        if any(phrase in lowered for phrase in ("subscribe", "sign up", "follow us", "read more", "advertisement")):
+            continue
+        chunks.append(text)
+    return _dedupe_chunks(chunks)
+
+
+def _score_candidate(node) -> tuple[int, list[str]]:
+    paragraphs = _extract_paragraphs(node)
+    if not paragraphs:
+        return 0, []
+
+    hints = _node_hints(node)
+    score = sum(min(len(p), 420) for p in paragraphs[:16])
+    score += min(len(paragraphs), 10) * 120
+    if getattr(node, "name", "") == "article":
+        score += 800
+    elif getattr(node, "name", "") == "main":
+        score += 500
+    elif node.get("role") == "main":
+        score += 350
+    if ARTICLE_CONTENT_RE.search(hints):
+        score += 220
+    if ARTICLE_NOISE_RE.search(hints) and not ARTICLE_CONTENT_RE.search(hints):
+        score -= 600
+    return score, paragraphs
+
+
+def _extract_article_payload_from_html(html: str, url: str, max_chars: int = MAX_TEXT_LENGTH) -> dict | None:
+    soup = BeautifulSoup(html or "", "html.parser")
+    title = _extract_page_title(soup)
+    meta_desc = _extract_meta_description(soup)
+    _decompose_noise(soup)
+
+    candidates = []
+    seen_nodes: set[int] = set()
+    for node in soup.find_all(True):
+        hints = _node_hints(node)
+        if (
+            node.name in {"article", "main"}
+            or node.get("role") == "main"
+            or node.get("itemprop") == "articleBody"
+            or ARTICLE_CONTENT_RE.search(hints)
+        ):
+            ident = id(node)
+            if ident in seen_nodes:
+                continue
+            seen_nodes.add(ident)
+            candidates.append(node)
+
+    if soup.body:
+        candidates.append(soup.body)
+
+    best_paragraphs: list[str] = []
+    best_score = -1
+    for node in candidates:
+        score, paragraphs = _score_candidate(node)
+        if score > best_score:
+            best_score = score
+            best_paragraphs = paragraphs
+
+    if not best_paragraphs:
+        best_paragraphs = _extract_paragraphs(soup, min_len=45)
+
+    body = " ".join(best_paragraphs)
+    if title and title.lower() not in body.lower():
+        body = f"{title}. {body}".strip(". ")
+    if len(body) < 220 and meta_desc and meta_desc.lower() not in body.lower():
+        body = f"{body} {meta_desc}".strip()
+    body = _normalize_text(body)[:max_chars]
+
+    if not body:
+        if not meta_desc:
+            return None
+        body = meta_desc[:max_chars]
+
+    return {
+        "title": title or "Article",
+        "excerpt": body,
+        "url": url,
+    }
+
+
+def _fetch_article_payload(url: str, timeout: int = 12, max_chars: int = MAX_TEXT_LENGTH) -> dict | None:
+    res = requests.get(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            )
+        },
+        timeout=timeout,
+    )
+    res.raise_for_status()
+    return _extract_article_payload_from_html(res.text, url, max_chars=max_chars)
+
+
 def extract_text_from_url(url: str) -> str | None:
     try:
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
-        for tag in soup(["nav", "footer", "script", "style", "aside", "header"]):
-            tag.decompose()
-        paragraphs = [
-            p.get_text(separator=" ", strip=True)
-            for p in soup.find_all("p")
-            if len(p.get_text(strip=True)) > 40
-        ]
-        if not paragraphs:
-            return None
-        return " ".join(paragraphs)[:MAX_TEXT_LENGTH]
+        payload = _fetch_article_payload(url, timeout=10, max_chars=MAX_TEXT_LENGTH)
+        return payload["excerpt"] if payload and payload.get("excerpt") else None
     except requests.exceptions.RequestException as e:
         logger.error("URL fetch error for %s: %s", url, e)
         return None
     except Exception as e:
-        logger.error("URL extraction error: %s", e)
+        logger.error("URL extraction error for %s: %s", url, e)
         return None
 
 
 def extract_article_preview(url: str, max_chars: int = 4000) -> dict | None:
     """Title + lead paragraphs for in-app 'read more'."""
     try:
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
-        title = ""
-        og = soup.find("meta", property="og:title")
-        if og and og.get("content"):
-            title = (og.get("content") or "").strip()
-        if not title and soup.title and soup.title.string:
-            title = soup.title.string.strip()
-        desc_og = soup.find("meta", property="og:description")
-        if desc_og and desc_og.get("content"):
-            meta_desc = (desc_og.get("content") or "").strip()
-        else:
-            md = soup.find("meta", attrs={"name": "description"})
-            meta_desc = (md.get("content") or "").strip() if md else ""
-
-        for tag in soup(["nav", "footer", "script", "style", "aside", "header"]):
-            tag.decompose()
-        paragraphs = [
-            p.get_text(separator=" ", strip=True)
-            for p in soup.find_all("p")
-            if len(p.get_text(strip=True)) > 35
-        ]
-        body = " ".join(paragraphs)[:max_chars] if paragraphs else ""
-        if not body and meta_desc:
-            body = meta_desc[:max_chars]
-        if not body:
-            return {"title": title or "Article", "excerpt": "", "url": url}
-        return {"title": title or "Article", "excerpt": body, "url": url}
+        payload = _fetch_article_payload(url, timeout=12, max_chars=max_chars)
+        if not payload:
+            return None
+        return payload
     except Exception as e:
         logger.warning("article preview failed for %s: %s", url, e)
         return None
@@ -399,6 +554,102 @@ def _newsapi_top_query_local(q: str, country: str, page_size: int = 12) -> list:
         return []
 
 
+def _gnews_top(
+    topic: str | None = None,
+    q: str | None = None,
+    page_size: int = 12,
+    country: str = "us",
+) -> list:
+    key = os.getenv("GNEWS_API_KEY")
+    if not key:
+        return []
+    try:
+        if topic:
+            url = (
+                "https://gnews.io/api/v4/top-headlines"
+                f"?topic={requests.utils.quote(topic)}"
+                f"&country={requests.utils.quote(country)}"
+                f"&lang=en&max={page_size}&token={key}"
+            )
+        else:
+            qq = q or "world"
+            url = (
+                "https://gnews.io/api/v4/search"
+                f"?q={requests.utils.quote(qq)}"
+                f"&country={requests.utils.quote(country)}"
+                f"&lang=en&max={page_size}&token={key}"
+            )
+        r = requests.get(url, timeout=8).json()
+        out = []
+        for a in r.get("articles", []) or []:
+            if not a.get("title"):
+                continue
+            source = a.get("source") or {}
+            out.append({
+                "title": a.get("title", ""),
+                "url": a.get("url", ""),
+                "source": source.get("name", "") if isinstance(source, dict) else str(source or ""),
+                "description": (a.get("description") or "").strip(),
+                "image": a.get("image") or "",
+                "publishedAt": a.get("publishedAt") or "",
+            })
+        return out[:page_size]
+    except Exception as e:
+        logger.warning("GNews headlines failed: %s", e)
+        return []
+
+
+def _google_news_rss(query: str | None = None, country: str = "us", page_size: int = 12) -> list:
+    country = (country or "us").strip().lower()
+    upper = country.upper() if len(country) == 2 else "US"
+    hl = {
+        "in": "en-IN",
+        "gb": "en-GB",
+        "au": "en-AU",
+        "ca": "en-CA",
+    }.get(country, f"en-{upper}")
+    ceid = f"{upper}:en"
+
+    if query:
+        url = (
+            "https://news.google.com/rss/search"
+            f"?q={requests.utils.quote(query)}&hl={hl}&gl={upper}&ceid={ceid}"
+        )
+    else:
+        url = f"https://news.google.com/rss?hl={hl}&gl={upper}&ceid={ceid}"
+
+    try:
+        r = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8,
+        )
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+        out = []
+        for item in root.findall(".//item"):
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            if not title or not link:
+                continue
+            source_el = item.find("source")
+            source = (source_el.text or "").strip() if source_el is not None and source_el.text else "Google News"
+            desc_html = item.findtext("description") or ""
+            description = BeautifulSoup(desc_html, "html.parser").get_text(" ", strip=True)
+            out.append({
+                "title": title,
+                "url": link,
+                "source": source,
+                "description": description,
+                "image": "",
+                "publishedAt": (item.findtext("pubDate") or "").strip(),
+            })
+        return out[:page_size]
+    except Exception as e:
+        logger.warning("Google News RSS failed: %s", e)
+        return []
+
+
 @lru_cache(maxsize=512)
 def _guess_country_code_from_coords(lat: float, lon: float) -> str | None:
     """
@@ -482,6 +733,15 @@ def _genre_news_bundle(genre: str, country: str) -> list:
     a3 = _newsapi_top(category=cat, page_size=8, country="us")
     if a3:
         return a3
+    a4 = _gnews_top(topic=cat, page_size=8, country=country)
+    if a4:
+        return a4
+    a5 = _gnews_top(q=f"{genre} news", page_size=8, country=country)
+    if a5:
+        return a5
+    a6 = _google_news_rss(query=f"{genre} news", country=country, page_size=8)
+    if a6:
+        return a6
     return _newsapi_top(q=f"{genre} news", page_size=8)
 
 
@@ -530,11 +790,15 @@ def analyze():
     try:
         text = (request.form.get("text") or "").strip()
         url = (request.form.get("url") or "").strip()
+        context_notes = (request.form.get("context_notes") or "").strip()
 
         if not text and url:
             text = extract_text_from_url(url)
             if not text:
                 return jsonify({"error": "Could not extract text from the provided URL."}), 422
+
+        if context_notes:
+            text = f"{text}\n\nAdditional timeline details: {context_notes}".strip()
 
         if not text:
             return jsonify({"error": "Please provide news text or a valid URL."}), 400
@@ -862,19 +1126,28 @@ def logout():
 
 @app.route("/api/headlines", methods=["GET"])
 def headlines():
-    if session.get("user_type") != "member" or not session.get("user_id"):
-        return jsonify({"error": "Available for signed-in members"}), 403
-
     country = _resolve_country_from_request(default_country="us")
 
     # Global major events (world / general) + localized top stories.
-    local_articles = _newsapi_top(category="general", page_size=12, country=country)
-    global_articles = _newsapi_top(q="world", page_size=10)
+    local_articles = (
+        _newsapi_top(category="general", page_size=12, country=country)
+        or _gnews_top(topic="general", page_size=12, country=country)
+        or _google_news_rss(country=country, page_size=12)
+    )
+    global_articles = (
+        _newsapi_top(q="world", page_size=10)
+        or _gnews_top(q="world", page_size=10, country=country)
+        or _google_news_rss(query="world", country=country, page_size=10)
+    )
 
     # Local first, then global.
     merged = _merge_unique_by_url(local_articles, global_articles)
     if not merged:
-        merged = _newsapi_top(category="general", page_size=14, country=country)
+        merged = (
+            _newsapi_top(category="general", page_size=14, country=country)
+            or _gnews_top(topic="general", page_size=14, country=country)
+            or _google_news_rss(country=country, page_size=14)
+        )
     return jsonify({"articles": merged[:20]})
 
 

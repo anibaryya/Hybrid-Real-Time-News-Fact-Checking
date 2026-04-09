@@ -220,20 +220,7 @@ function Header({ me, backendMode, theme, onToggleTheme }) {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         height: 64, flexWrap: 'wrap', gap: 12
       }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-          <a href="landing.html" style={{ textDecoration: 'none', color: 'inherit' }}>
-            <h1 style={{
-              fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 900,
-              letterSpacing: -1, color: 'var(--text)'
-            }}>
-              Verit<span style={{ color: 'var(--accent)' }}>AI</span>
-            </h1>
-          </a>
-          <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)',
-            letterSpacing: 2, textTransform: 'uppercase', paddingBottom: 2
-          }}>FACT CHECKER</span>
-        </div>
+        <div style={{ flex: 1, minWidth: 24 }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
           {member && (
             <>
@@ -281,10 +268,6 @@ function InputPanel({ onSubmit, loading }) {
   const [textDraft, setTextDraft] = useState('');
   const [urlDraft, setUrlDraft] = useState('');
   const [lang, setLang] = useState('auto');
-  const [ixBusy, setIxBusy] = useState(false);
-  const [recState, setRecState] = useState(null);
-  const mediaRef = useRef(null);
-  const chunksRef = useRef([]);
 
   const runSubmit = (text, usedMode) => {
     const t = (text || '').trim();
@@ -306,89 +289,13 @@ function InputPanel({ onSubmit, loading }) {
     setUrlDraft('');
   };
 
-  const transcribeBlob = async (blob, fname) => {
-    setIxBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append('audio', blob, fname || 'speech.webm');
-      const res = await fetch(`${API_BASE}/api/transcribe-audio`, {
-        method: 'POST', body: fd, credentials: 'include',
-        signal: AbortSignal.timeout(120000),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Transcription failed');
-      setTextDraft(data.text || '');
-      runSubmit(data.text, 'voice');
-    } catch (err) {
-      alert(err.message || String(err));
-    } finally {
-      setIxBusy(false);
-    }
-  };
-
-  const startRec = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      chunksRef.current = [];
-      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-      mr.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
-      mr.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' });
-        mediaRef.current = null;
-        await transcribeBlob(blob, 'speech.webm');
-      };
-      mr.start();
-      mediaRef.current = mr;
-      setRecState('recording');
-    } catch (e) {
-      alert('Microphone access denied or unavailable.');
-    }
-  };
-
-  const stopRec = () => {
-    if (mediaRef.current && mediaRef.current.state !== 'inactive') mediaRef.current.stop();
-    setRecState(null);
-  };
-
-  const onImagePick = async (e) => {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!f || loading) return;
-    setIxBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append('image', f);
-      const res = await fetch(`${API_BASE}/api/ocr-image`, {
-        method: 'POST', body: fd, credentials: 'include',
-        signal: AbortSignal.timeout(60000),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'OCR failed');
-      setTextDraft(data.text || '');
-      runSubmit(data.text, 'image');
-    } catch (err) {
-      alert(err.message || String(err));
-    } finally {
-      setIxBusy(false);
-    }
-  };
-
-  const onAudioPick = async (e) => {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
-    await transcribeBlob(f, f.name || 'audio.wav');
-  };
-
   const placeholder = mode === 'text'
     ? 'Paste news headline or full article text here…'
     : mode === 'url'
     ? 'https://example.com/news-article'
     : '';
 
-  const busy = loading || ixBusy;
+  const busy = loading;
 
   return (
     <div className="fade-up" style={{
@@ -403,8 +310,6 @@ function InputPanel({ onSubmit, loading }) {
         {[
           { id: 'text', label: 'Text', icon: Icons.clipboard },
           { id: 'url', label: 'URL', icon: Icons.link },
-          { id: 'voice', label: 'Voice', icon: Icons.mic },
-          { id: 'image', label: 'Image', icon: Icons.image },
         ].map(m => (
           <button key={m.id} type="button" onClick={() => setMode(m.id)}
             style={{
@@ -472,63 +377,6 @@ function InputPanel({ onSubmit, loading }) {
                 color: 'var(--text)', caretColor: 'var(--accent)',
               }}
             />
-          </div>
-        )}
-        {mode === 'voice' && (
-          <div style={{ paddingBottom: 24 }}>
-            <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-              Record audio or upload a file. Requires <strong>GROQ_API_KEY</strong> on the server (Whisper).
-              <em style={{ marginLeft: 8, color: 'var(--accent)' }}>(coming soon)</em>
-            </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-              {!recState ? (
-                <button type="button" onClick={startRec} disabled={busy}
-                  style={{
-                    padding: '12px 20px', borderRadius: 10, border: '1px solid var(--border2)',
-                    background: 'var(--bg3)', color: 'var(--text)', cursor: busy ? 'not-allowed' : 'pointer',
-                    fontFamily: 'var(--font-body)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8
-                  }}>
-                  <Icon d={Icons.mic} size={16} /> Start recording
-                </button>
-              ) : (
-                <button type="button" onClick={stopRec}
-                  style={{
-                    padding: '12px 20px', borderRadius: 10, border: 'none',
-                    background: 'var(--fake)', color: '#fff', cursor: 'pointer',
-                    fontFamily: 'var(--font-body)', fontWeight: 600
-                  }}>Stop & transcribe</button>
-              )}
-              <label style={{
-                padding: '12px 20px', borderRadius: 10, border: '1px solid var(--border2)',
-                background: 'var(--bg3)', color: 'var(--text)', cursor: busy ? 'not-allowed' : 'pointer',
-                fontFamily: 'var(--font-body)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 8
-              }}>
-                Upload audio
-                <input type="file" accept="audio/*,.webm,.wav,.mp3,.m4a" hidden disabled={busy} onChange={onAudioPick} />
-              </label>
-            </div>
-            {textDraft && mode === 'voice' && (
-              <p style={{ marginTop: 16, fontSize: 13, color: 'var(--text3)', whiteSpace: 'pre-wrap' }}>{textDraft.slice(0, 500)}{textDraft.length > 500 ? '…' : ''}</p>
-            )}
-          </div>
-        )}
-        {mode === 'image' && (
-          <div style={{ paddingBottom: 24 }}>
-            <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-              Screenshot or photo of an article. Requires <strong>Tesseract OCR</strong> on the server.
-              <em style={{ marginLeft: 8, color: 'var(--accent)' }}>(coming soon)</em>
-            </p>
-            <label style={{
-              display: 'inline-block', padding: '12px 24px', borderRadius: 10,
-              background: 'var(--accent)', color: '#0a0a0b', fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer',
-              fontFamily: 'var(--font-body)'
-            }}>
-              Choose image
-              <input type="file" accept="image/*" hidden disabled={busy} onChange={onImagePick} />
-            </label>
-            {textDraft && (
-              <p style={{ marginTop: 16, fontSize: 13, color: 'var(--text3)', whiteSpace: 'pre-wrap' }}>{textDraft.slice(0, 800)}{textDraft.length > 800 ? '…' : ''}</p>
-            )}
           </div>
         )}
       </div>
@@ -925,7 +773,7 @@ function LoadingSkeleton() {
 // ── How It Works ───────────────────────────────────────────────
 function HowItWorks() {
   const steps = [
-    { icon: Icons.clipboard, label: 'Input', desc: 'Text, URL, voice (Whisper), or image (OCR)' },
+    { icon: Icons.clipboard, label: 'Input', desc: 'Paste article text or verify directly from a news URL' },
     { icon: Icons.brain, label: 'ML Analysis', desc: 'BERT + TF-IDF processes the claim' },
     { icon: Icons.globe, label: 'Evidence', desc: 'Real-time search across 4 news APIs' },
     { icon: Icons.shield, label: 'AI Judge', desc: 'LLaMA3 reasons over all evidence' },
@@ -997,12 +845,31 @@ function StatsBar() {
   );
 }
 
-// ── Member news sidebar ───────────────────────────────────────
-function NewsSidebar({ geo }) {
+const CLARIFICATION_FIELDS = [
+  {
+    id: 'timeframe',
+    label: 'Timeline',
+    placeholder: 'Which date, year, or time period are you referring to?',
+  },
+  {
+    id: 'location',
+    label: 'Location',
+    placeholder: 'Which place, country, or article/source should be checked?',
+  },
+  {
+    id: 'details',
+    label: 'Key detail',
+    placeholder: 'What exact person, event, number, or outcome should be verified?',
+  },
+];
+
+// ── Headlines sidebar ────────────────────────────────────────
+function NewsSidebar({ geo, canPersonalize }) {
   const [tab, setTab] = useState('top');
   const [articles, setArticles] = useState([]);
   const [emptyReason, setEmptyReason] = useState('');
   const [feedLoading, setFeedLoading] = useState(false);
+  const activeTab = canPersonalize ? tab : 'top';
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -1010,7 +877,7 @@ function NewsSidebar({ geo }) {
     const geoQs = geo && typeof geo.lat === 'number' && typeof geo.lon === 'number'
       ? `?lat=${encodeURIComponent(geo.lat)}&lon=${encodeURIComponent(geo.lon)}`
       : '';
-    const path = tab === 'top' ? `/api/headlines${geoQs}` : `/api/news-personalized${geoQs}`;
+    const path = activeTab === 'top' ? `/api/headlines${geoQs}` : `/api/news-personalized${geoQs}`;
     setFeedLoading(true);
     setEmptyReason('');
     fetch(`${API_BASE}${path}`, { credentials: 'include', signal: ctrl.signal })
@@ -1019,7 +886,9 @@ function NewsSidebar({ geo }) {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) {
           if (r.status === 403) {
-            setEmptyReason('Sign in to view this news feed.');
+            setEmptyReason(activeTab === 'mine'
+              ? 'Sign in as a member to see genre-based headlines.'
+              : 'Sign in to view this news feed.');
           } else {
             setEmptyReason('News feed is temporarily unavailable. Please try again.');
           }
@@ -1033,7 +902,7 @@ function NewsSidebar({ geo }) {
         const arr = Array.isArray(d.articles) ? d.articles : [];
         setArticles(arr);
         if (arr.length === 0) {
-          if (tab === 'mine') {
+          if (activeTab === 'mine') {
             setEmptyReason('No articles found for your selected genres right now. Try saving genres again or check back shortly.');
           } else {
             setEmptyReason('No top stories available right now for your region.');
@@ -1052,20 +921,22 @@ function NewsSidebar({ geo }) {
       cancelled = true;
       ctrl.abort();
     };
-  }, [tab, geo]);
+  }, [tab, geo, canPersonalize]);
 
   const tabBtn = (id, label) => (
     <button
       key={id}
       type="button"
-      onClick={() => setTab(id)}
+      onClick={() => canPersonalize && setTab(id)}
       style={{
         flex: 1, padding: '10px 8px', border: 'none', borderRadius: 8, cursor: 'pointer',
         fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
-        background: tab === id ? 'var(--bg4)' : 'transparent',
-        color: tab === id ? 'var(--accent)' : 'var(--text3)',
-        borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
+        background: activeTab === id ? 'var(--bg4)' : 'transparent',
+        color: activeTab === id ? 'var(--accent)' : 'var(--text3)',
+        borderBottom: activeTab === id ? '2px solid var(--accent)' : '2px solid transparent',
         marginBottom: -1,
+        opacity: !canPersonalize && id === 'mine' ? 0.45 : 1,
+        cursor: !canPersonalize && id === 'mine' ? 'not-allowed' : 'pointer',
       }}
     >{label}</button>
   );
@@ -1087,12 +958,12 @@ function NewsSidebar({ geo }) {
       <div style={{ overflowY: 'auto', padding: 12, flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {feedLoading && (
           <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>
-            Loading {tab === 'mine' ? 'genre news' : 'top stories'}...
+            Loading {activeTab === 'mine' ? 'genre news' : 'top stories'}...
           </p>
         )}
         {!feedLoading && articles.length === 0 && (
           <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>
-            {emptyReason || (tab === 'mine'
+            {emptyReason || (activeTab === 'mine'
               ? 'No articles found for your selected genres right now.'
               : 'No top stories available right now.')}
           </p>
@@ -1131,7 +1002,11 @@ function NewsSidebar({ geo }) {
         ))}
       </div>
       <div style={{ padding: 12, borderTop: '1px solid var(--border)' }}>
-        <a href="genres.html" style={{ fontSize: 12, color: 'var(--accent)' }}>Edit genre preferences →</a>
+        {canPersonalize ? (
+          <a href="genres.html" style={{ fontSize: 12, color: 'var(--accent)' }}>Edit genre preferences →</a>
+        ) : (
+          <span style={{ fontSize: 12, color: 'var(--text3)' }}>Sign in as a member to personalize this feed.</span>
+        )}
       </div>
     </aside>
   );
@@ -1173,9 +1048,13 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [needsClarification, setNeedsClarification] = useState(null);
-  const [followupYesPrompt, setFollowupYesPrompt] = useState(null);
-  const [followupChoice, setFollowupChoice] = useState(null);
+  const [clarificationPrompt, setClarificationPrompt] = useState(null);
+  const [clarificationChoice, setClarificationChoice] = useState(null);
+  const [clarificationError, setClarificationError] = useState(null);
+  const [clarificationAnswers, setClarificationAnswers] = useState(() => (
+    CLARIFICATION_FIELDS.reduce((acc, field) => ({ ...acc, [field.id]: '' }), {})
+  ));
+  const [activeInput, setActiveInput] = useState(null);
   const [geo, setGeo] = useState(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('veritai_theme') || 'dark');
   const [backendMode, setBackendMode] = useState(false);
@@ -1188,6 +1067,9 @@ function App() {
       form.append('url', inputData.text);
     } else {
       form.append('text', inputData.text);
+    }
+    if (inputData.contextNotes) {
+      form.append('context_notes', inputData.contextNotes);
     }
     form.append('input_mode', inputData.mode || 'text');
     const res = await fetch(`${API_BASE}/api/analyze-news`, {
@@ -1220,9 +1102,7 @@ function App() {
     localStorage.setItem('veritai_theme', theme);
   }, [theme]);
 
-  // Ask for location permission and use it to localize headlines/news.
   useEffect(() => {
-    if (!me || me.user_type !== 'member') return;
     if (geo) return;
     if (!navigator.geolocation) return;
 
@@ -1239,54 +1119,51 @@ function App() {
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
     );
-  }, [me, geo]);
+  }, [geo]);
+
+  const resetClarificationState = useCallback(() => {
+    setClarificationPrompt(null);
+    setClarificationChoice(null);
+    setClarificationError(null);
+    setClarificationAnswers(CLARIFICATION_FIELDS.reduce((acc, field) => {
+      acc[field.id] = '';
+      return acc;
+    }, {}));
+  }, []);
+
+  const applyBackendResult = useCallback((data, suppressFollowup) => {
+    const toScore = (v) => v != null ? Math.round(v * 100) : null;
+    setResult({
+      verdict:     data.final_label,
+      confidence:  data.confidence,
+      certainty:   data.certainty,
+      summary:     data.reason || '',
+      sources:     data.articles || [],
+      bert_score:  data.scores ? toScore(data.scores.bert)  : null,
+      tfidf_score: data.scores ? toScore(data.scores.tfidf) : null,
+      llm_score:   data.scores ? toScore(data.scores.judge) : null,
+    });
+    setClarificationPrompt(suppressFollowup ? null : (data.followup_question || null));
+  }, []);
 
   const handleSubmit = useCallback(async (inputData) => {
+    const suppressFollowup = Boolean(inputData.clarificationRound);
     setLoading(true);
     setResult(null);
     setError(null);
-    setNeedsClarification(null);
-    setFollowupYesPrompt(null);
-    setFollowupChoice(null);
+    setActiveInput(inputData);
+    resetClarificationState();
 
     try {
-      // Always try backend first (helps recover from cold starts after initial ping failure).
       const data = await tryBackendAnalyze(inputData, 120000);
       setBackendMode(true);
-
-      // Normalize Flask response fields to what ResultCard expects
-      const toScore = (v) => v != null ? Math.round(v * 100) : null;
-      setResult({
-        verdict:     data.final_label,
-        confidence:  data.confidence,
-        certainty:   data.certainty,
-        summary:     data.reason || '',
-        sources:     data.articles || [],
-        bert_score:  data.scores ? toScore(data.scores.bert)  : null,
-        tfidf_score: data.scores ? toScore(data.scores.tfidf) : null,
-        llm_score:   data.scores ? toScore(data.scores.judge) : null,
-      });
-      setNeedsClarification(data.followup_question || null);
-      setFollowupYesPrompt(data.followup_yes_prompt || null);
+      applyBackendResult(data, suppressFollowup);
     } catch (err) {
-      // Retry once (helps on cold starts / transient deploy wake-up).
       try {
         await fetch(`${API_BASE}/api/ping`, { credentials: 'include', signal: AbortSignal.timeout(45000) });
         const data2 = await tryBackendAnalyze(inputData, 120000);
         setBackendMode(true);
-        const toScore = (v) => v != null ? Math.round(v * 100) : null;
-        setResult({
-          verdict:     data2.final_label,
-          confidence:  data2.confidence,
-          certainty:   data2.certainty,
-          summary:     data2.reason || '',
-          sources:     data2.articles || [],
-          bert_score:  data2.scores ? toScore(data2.scores.bert)  : null,
-          tfidf_score: data2.scores ? toScore(data2.scores.tfidf) : null,
-          llm_score:   data2.scores ? toScore(data2.scores.judge) : null,
-        });
-        setNeedsClarification(data2.followup_question || null);
-        setFollowupYesPrompt(data2.followup_yes_prompt || null);
+        applyBackendResult(data2, suppressFollowup);
       } catch (retryErr) {
         setError(`${retryErr?.message || 'Cannot connect to backend right now.'} Showing demo result.`);
         await new Promise(r => setTimeout(r, 800));
@@ -1297,9 +1174,32 @@ function App() {
       setLoading(false);
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     }
-  }, [tryBackendAnalyze]);
+  }, [applyBackendResult, resetClarificationState, tryBackendAnalyze]);
+
+  const handleClarificationFieldChange = useCallback((id, value) => {
+    setClarificationAnswers(prev => ({ ...prev, [id]: value }));
+  }, []);
+
+  const submitClarificationDetails = useCallback(async () => {
+    if (!activeInput) return;
+    const missing = CLARIFICATION_FIELDS.find(field => !String(clarificationAnswers[field.id] || '').trim());
+    if (missing) {
+      setClarificationError(`Please answer the ${missing.label.toLowerCase()} question before continuing.`);
+      return;
+    }
+    setClarificationError(null);
+    const contextNotes = CLARIFICATION_FIELDS
+      .map(field => `${field.label}: ${String(clarificationAnswers[field.id] || '').trim()}`)
+      .join('\n');
+    await handleSubmit({
+      ...activeInput,
+      contextNotes,
+      clarificationRound: (activeInput.clarificationRound || 0) + 1,
+    });
+  }, [activeInput, clarificationAnswers, handleSubmit]);
 
   const member = me && me.user_type === 'member';
+  const showSidebar = true;
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -1311,12 +1211,12 @@ function App() {
       />
 
       <main style={{
-        maxWidth: member ? 1240 : 860,
+        maxWidth: showSidebar ? 1240 : 860,
         margin: '0 auto',
         padding: '48px 24px 80px',
-        display: member ? 'grid' : 'block',
-        gridTemplateColumns: member ? 'minmax(0, 1fr) minmax(280px, 340px)' : undefined,
-        gap: member ? 28 : 0,
+        display: showSidebar ? 'grid' : 'block',
+        gridTemplateColumns: showSidebar ? 'minmax(0, 1fr) minmax(280px, 340px)' : undefined,
+        gap: showSidebar ? 28 : 0,
         alignItems: 'start',
       }}>
 
@@ -1338,7 +1238,7 @@ function App() {
           {(me.user_type !== 'guest' && me.user_type !== 'member') ? (
             <p style={{ fontSize: 13, color: 'var(--text3)', marginTop: 14 }}>
               <a href="auth.html" style={{ color: 'var(--accent)' }}>Sign in</a>
-              {' '}as guest, email, or phone for saved sessions; members get headline panels and genre feeds.
+              {' '}as guest, email, or phone for saved sessions; members get personalized genre feeds.
             </p>
           ) : null}
         </div>
@@ -1366,7 +1266,7 @@ function App() {
         <InputPanel onSubmit={handleSubmit} loading={loading} />
 
         {/* Follow-up request after initial verdict */}
-        {needsClarification && !loading && (
+        {clarificationPrompt && !loading && (
           <div className="fade-in" style={{
             marginTop: 16, background: 'var(--uncertain-bg)', border: '1px solid var(--uncertain-border)',
             borderRadius: 10, padding: '12px 16px',
@@ -1374,36 +1274,82 @@ function App() {
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Icon d={Icons.info} size={16} stroke="var(--uncertain)" />
-              <span>{needsClarification}</span>
+              <span>{clarificationPrompt}</span>
             </div>
-            {!followupChoice && (
-              <div style={{ display: 'flex', gap: 10 }}>
+            {!clarificationChoice && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <button
                   type="button"
-                  onClick={() => setFollowupChoice('yes')}
+                  onClick={() => setClarificationChoice('yes')}
                   style={{
                     border: '1px solid var(--uncertain-border)', background: 'var(--bg3)', color: 'var(--text)',
                     borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: 12
                   }}
-                >YES</button>
+                >Yes, current timeline</button>
                 <button
                   type="button"
-                  onClick={() => setFollowupChoice('no')}
+                  onClick={() => setClarificationChoice('no')}
                   style={{
                     border: '1px solid var(--uncertain-border)', background: 'var(--bg3)', color: 'var(--text)',
                     borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: 12
                   }}
-                >NO</button>
+                >No, different timeline</button>
               </div>
             )}
-            {followupChoice === 'yes' && followupYesPrompt && (
+            {clarificationChoice === 'yes' && (
               <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-                {followupYesPrompt}
+                Keeping this judgment for the current timeline.
               </div>
             )}
-            {followupChoice === 'no' && (
-              <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-                Keeping this verdict based on currently reported incidents.
+            {clarificationChoice === 'no' && (
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+                  Answer these 3 questions for the different timeline, then I’ll give a final judgment.
+                </div>
+                {CLARIFICATION_FIELDS.map(field => (
+                  <label key={field.id} style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>{field.label.toUpperCase()}</span>
+                    <input
+                      type="text"
+                      value={clarificationAnswers[field.id] || ''}
+                      onChange={(e) => handleClarificationFieldChange(field.id, e.target.value)}
+                      placeholder={field.placeholder}
+                      style={{
+                        width: '100%',
+                        borderRadius: 8,
+                        border: '1px solid var(--uncertain-border)',
+                        background: 'var(--bg3)',
+                        color: 'var(--text)',
+                        padding: '10px 12px',
+                        fontFamily: 'var(--font-body)',
+                        fontSize: 13,
+                      }}
+                    />
+                  </label>
+                ))}
+                {clarificationError && (
+                  <div style={{ fontSize: 12, color: 'var(--fake)' }}>
+                    {clarificationError}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={submitClarificationDetails}
+                  style={{
+                    alignSelf: 'flex-start',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '10px 14px',
+                    background: 'var(--accent)',
+                    color: '#0a0a0b',
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font-body)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  Re-check with these details
+                </button>
               </div>
             )}
           </div>
@@ -1440,7 +1386,7 @@ function App() {
         )}
         </div>
 
-        {member && <NewsSidebar geo={geo} />}
+        <NewsSidebar geo={geo} canPersonalize={member} />
 
       </main>
     </div>
