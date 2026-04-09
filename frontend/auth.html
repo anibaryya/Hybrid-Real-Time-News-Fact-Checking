@@ -105,9 +105,7 @@
   </div>
 
   <script>
-    const API = (location.protocol === 'file:' || !location.port)
-      ? 'http://127.0.0.1:5000'
-      : location.origin;
+    const API = location.origin;
     async function api(path, opt) {
       const r = await fetch(API + path, {
         ...opt,
