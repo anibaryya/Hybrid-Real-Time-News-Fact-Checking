@@ -14,10 +14,16 @@ __pycache__/
 *.db
 
 # ML / Data files (IMPORTANT)
-ml_model/
 *.npy
 *.pkl
 *.csv
+ml_model/*
+!ml_model/model.py
+!ml_model/__init__.py
+!ml_model/tfidf_model.pkl
+ml_model/bert_model/
+ml_model/data_combined/
+ml_model/__pycache__/
 
 # OS
 .DS_Store

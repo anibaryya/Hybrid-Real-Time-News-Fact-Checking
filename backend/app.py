@@ -14,11 +14,29 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from dotenv import load_dotenv
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+_ANALYZE_NEWS_IMPORT_ERROR = None
 try:
-    from ml_model.model import analyze_news
-except:
+    from ml_model.model import analyze_news as _analyze_news_impl
+except Exception as exc:
+    _ANALYZE_NEWS_IMPORT_ERROR = exc
+    logger.exception("Could not import ml_model.model.analyze_news; using degraded fallback")
+
     def analyze_news(text):
-        return "Model temporarily unavailable"
+        return {
+            "label": "UNCERTAIN",
+            "confidence": 52.0,
+            "certainty": "LOW",
+            "reason": "Analysis engine is temporarily unavailable on the server.",
+            "articles": [],
+            "scores": {"bert": None, "tfidf": None, "evidence": 0.0, "judge": None},
+            "followup_question": None,
+            "followup_yes_prompt": None,
+        }
+else:
+    analyze_news = _analyze_news_impl
 
 try:
     from backend import database as dbstore
@@ -31,9 +49,6 @@ import requests
 from bs4 import BeautifulSoup
 from werkzeug.security import generate_password_hash, check_password_hash
 from psycopg2.extras import RealDictCursor
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 
@@ -69,6 +84,66 @@ MIN_TEXT_LENGTH = 20
 
 GUEST_TTL = timedelta(minutes=30)
 MEMBER_TTL = timedelta(hours=24)
+
+
+def _normalize_analysis_result(result) -> dict:
+    fallback = {
+        "label": "UNCERTAIN",
+        "confidence": 52.0,
+        "certainty": "LOW",
+        "reason": "Analysis engine is temporarily unavailable. Please try again shortly.",
+        "articles": [],
+        "scores": {"bert": None, "tfidf": None, "evidence": 0.0, "judge": None},
+        "followup_question": None,
+        "followup_yes_prompt": None,
+    }
+
+    if isinstance(result, dict):
+        label = str(result.get("label") or fallback["label"]).upper()
+        if label not in {"REAL", "FAKE", "UNCERTAIN"}:
+            label = fallback["label"]
+
+        certainty = str(result.get("certainty") or fallback["certainty"]).upper()
+        if certainty not in {"LOW", "MEDIUM", "HIGH", "VERY LOW"}:
+            certainty = fallback["certainty"]
+
+        try:
+            confidence = float(result.get("confidence", fallback["confidence"]))
+        except (TypeError, ValueError):
+            confidence = fallback["confidence"]
+
+        articles = result.get("articles", fallback["articles"])
+        if not isinstance(articles, list):
+            articles = fallback["articles"]
+
+        scores = result.get("scores", fallback["scores"])
+        if not isinstance(scores, dict):
+            scores = fallback["scores"]
+
+        normalized = dict(fallback)
+        normalized.update(
+            {
+                "label": label,
+                "confidence": confidence,
+                "certainty": certainty,
+                "reason": str(result.get("reason") or fallback["reason"]),
+                "articles": articles,
+                "scores": scores,
+                "followup_question": result.get("followup_question"),
+                "followup_yes_prompt": result.get("followup_yes_prompt"),
+            }
+        )
+        return normalized
+
+    logger.warning("Analyzer returned unexpected result type %s: %r", type(result).__name__, result)
+    if isinstance(result, str) and result.strip():
+        fallback["reason"] = result.strip()
+    elif result is not None:
+        fallback["reason"] = f"Unexpected analyzer response type: {type(result).__name__}."
+
+    if _ANALYZE_NEWS_IMPORT_ERROR is not None:
+        fallback["reason"] = "Analysis engine is unavailable due to server configuration. Check Railway environment variables and redeploy."
+    return fallback
 
 
 @app.before_request
@@ -429,7 +504,13 @@ def health():
         "GNEWS_API_KEY": bool(os.getenv("GNEWS_API_KEY")),
         "SERPER_API_KEY": bool(os.getenv("SERPER_API_KEY")),
     }
-    return jsonify({"status": "ok", "keys": keys}), 200
+    return jsonify(
+        {
+            "status": "ok",
+            "keys": keys,
+            "analyzer_import_ok": _ANALYZE_NEWS_IMPORT_ERROR is None,
+        }
+    ), 200
 
 
 @app.route("/api/article-preview", methods=["POST"])
@@ -479,6 +560,7 @@ def analyze():
                 "followup_question": None,
                 "followup_yes_prompt": None,
             }
+        result = _normalize_analysis_result(result)
 
         payload = {
             "final_label": result["label"],
