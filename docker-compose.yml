@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: veritai
+      POSTGRES_PASSWORD: veritai
+      POSTGRES_DB: veritai
+    ports:
+      - "5432:5432"
+    volumes:
+      - veritai_pgdata:/var/lib/postgresql/data
+
+volumes:
+  veritai_pgdata:

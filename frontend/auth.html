@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VeritAI — Sign in</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0b; --bg2: #111113; --border: rgba(255,255,255,0.08);
+      --text: #f0ede8; --muted: #9b9794; --accent: #e8c97d;
+      --err: #f87171;
+    }
+    body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      padding: 32px 20px 60px;
+    }
+    .wrap { max-width: 420px; margin: 0 auto; }
+    h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+    h1 span { color: var(--accent); }
+    .sub { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+    .grid { display: flex; flex-direction: column; gap: 12px; }
+    button, .btn {
+      width: 100%;
+      padding: 14px 20px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      text-align: center;
+    }
+    button.primary, .btn.primary {
+      background: var(--accent);
+      color: var(--bg);
+      border-color: transparent;
+    }
+    button:hover { filter: brightness(1.06); }
+    .back { margin-top: 44px; background: transparent; color: var(--muted); font-size: 13px; }
+    .panel {
+      display: none;
+      margin-top: 24px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--bg2);
+    }
+    .panel.active { display: block; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      margin-bottom: 14px;
+      font-family: inherit;
+    }
+    .msg { font-size: 13px; margin-top: 12px; }
+    .msg.err { color: var(--err); }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+    #g_btn { margin-top: 12px; display: flex; justify-content: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Verit<span>AI</span></h1>
+    <p class="sub">Choose how you want to continue.</p>
+
+    <div class="grid" id="main-grid">
+      <button type="button" class="primary" id="b-guest">Continue as guest</button>
+      <button type="button" id="b-email">Continue with email (OTP)</button>
+      <div id="g_btn"></div>
+    </div>
+
+    <div class="panel" id="p-email">
+      <div id="email-step1">
+        <label>Email</label>
+        <input type="email" id="email-addr" autocomplete="email" />
+        <button type="button" class="primary" id="email-send">Send OTP</button>
+      </div>
+      <div id="email-step2" style="display:none;">
+        <label>Enter OTP from email</label>
+        <input type="text" id="email-otp" inputmode="numeric" maxlength="8" />
+        <button type="button" class="primary" id="email-verify">Verify & continue</button>
+      </div>
+      <p class="msg" id="email-dev" style="display:none;color:#e8c97d;font-weight:600;"></p>
+      <p class="msg err" id="email-err"></p>
+    </div>
+
+    <a href="landing.html" class="btn back">← Back to home</a>
+  </div>
+
+  <script>
+    const API = (location.protocol === 'file:' || !location.port)
+      ? 'http://127.0.0.1:5000'
+      : location.origin;
+    async function api(path, opt) {
+      const r = await fetch(API + path, {
+        ...opt,
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(opt && opt.headers) },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.statusText);
+      return data;
+    }
+
+    function show(id) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      const el = document.getElementById(id);
+      if (el) el.classList.add('active');
+    }
+
+    document.getElementById('b-guest').onclick = async () => {
+      await api('/api/auth/guest', { method: 'POST', body: '{}' });
+      location.href = 'index.html';
+    };
+
+    document.getElementById('b-email').onclick = () => {
+      document.getElementById('main-grid').style.display = 'none';
+      show('p-email');
+    };
+
+    const emailErr = document.getElementById('email-err');
+    document.getElementById('email-send').onclick = async () => {
+      emailErr.textContent = '';
+      document.getElementById('email-dev').style.display = 'none';
+      try {
+        const r = await fetch(API + '/api/auth/request-otp', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channel: 'email',
+            email: document.getElementById('email-addr').value.trim(),
+          }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || r.statusText);
+        const dev = document.getElementById('email-dev');
+        if (data.dev_otp) {
+          dev.style.display = 'block';
+          dev.textContent = 'Verification code: ' + data.dev_otp;
+        }
+        document.getElementById('email-step1').style.display = 'none';
+        document.getElementById('email-step2').style.display = 'block';
+      } catch (e) {
+        emailErr.textContent = e.message;
+      }
+    };
+    document.getElementById('email-verify').onclick = async () => {
+      emailErr.textContent = '';
+      try {
+        await api('/api/auth/verify-otp', {
+          method: 'POST',
+          body: JSON.stringify({
+            channel: 'email',
+            email: document.getElementById('email-addr').value.trim(),
+            otp: document.getElementById('email-otp').value.trim(),
+          }),
+        });
+        location.href = 'index.html';
+      } catch (e) {
+        emailErr.textContent = e.message;
+      }
+    };
+
+    async function initGoogle() {
+      let cid = '';
+      try {
+        const r = await fetch(API + '/api/config');
+        const j = await r.json();
+        cid = j.googleClientId || '';
+      } catch (_) {}
+      if (!cid || !window.google) return;
+      google.accounts.id.initialize({
+        client_id: cid,
+        callback: async (res) => {
+          try {
+            await api('/api/auth/google', {
+              method: 'POST',
+              body: JSON.stringify({ credential: res.credential }),
+            });
+            location.href = 'index.html';
+          } catch (e) {
+            alert(e.message);
+          }
+        },
+      });
+      google.accounts.id.renderButton(document.getElementById('g_btn'), {
+        theme: 'filled_black',
+        size: 'large',
+        width: 380,
+        text: 'continue_with',
+      });
+    }
+    window.addEventListener('load', () => {
+      const tid = setInterval(() => {
+        if (window.google && google.accounts) {
+          clearInterval(tid);
+          initGoogle();
+        }
+      }, 100);
+      setTimeout(() => clearInterval(tid), 8000);
+    });
+  </script>
+</body>
+</html>

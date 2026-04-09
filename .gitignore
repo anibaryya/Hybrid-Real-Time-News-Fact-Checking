@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Database
+*.db
+
+# ML / Data files (IMPORTANT)
+ml_model/
+*.npy
+*.pkl
+*.csv
+
+# OS
+.DS_Store

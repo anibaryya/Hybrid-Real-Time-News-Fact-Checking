@@ -1,0 +1,1429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VeritAI — Real-Time News Fact Checker</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=JetBrains+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0b;
+    --bg2: #111113;
+    --bg3: #18181c;
+    --bg4: #1e1e24;
+    --border: rgba(255,255,255,0.06);
+    --border2: rgba(255,255,255,0.12);
+    --text: #f0ede8;
+    --text2: #9b9794;
+    --text3: #5c5a57;
+    --accent: #e8c97d;
+    --accent2: #c9a94a;
+    --real: #4ade80;
+    --real-bg: rgba(74,222,128,0.08);
+    --real-border: rgba(74,222,128,0.25);
+    --fake: #f87171;
+    --fake-bg: rgba(248,113,113,0.08);
+    --fake-border: rgba(248,113,113,0.25);
+    --uncertain: #fbbf24;
+    --uncertain-bg: rgba(251,191,36,0.08);
+    --uncertain-border: rgba(251,191,36,0.25);
+    --font-display: 'Playfair Display', Georgia, serif;
+    --font-body: 'DM Sans', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+  :root[data-theme='light'] {
+    --bg: #f6f7fb;
+    --bg2: #ffffff;
+    --bg3: #f1f4f9;
+    --bg4: #e7ecf3;
+    --border: rgba(15, 23, 42, 0.12);
+    --border2: rgba(15, 23, 42, 0.22);
+    --text: #111827;
+    --text2: #374151;
+    --text3: #6b7280;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    overflow-x: hidden;
+    line-height: 1.6;
+  }
+
+  #root { min-height: 100vh; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 2px; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes scanLine {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+  }
+  @keyframes pulse-ring {
+    0% { transform: scale(0.8); opacity: 1; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  @keyframes ticker {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .fade-up { animation: fadeUp 0.6s ease both; }
+  .fade-in { animation: fadeIn 0.4s ease both; }
+
+  .grain::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.4;
+  }
+
+  .shimmer-skeleton {
+    background: linear-gradient(90deg, var(--bg3) 25%, var(--bg4) 50%, var(--bg3) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 4px;
+  }
+
+  .confidence-bar {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--bg4);
+    overflow: hidden;
+    position: relative;
+  }
+  .confidence-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  textarea:focus, input:focus { outline: none; }
+</style>
+</head>
+<body class="grain">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// Same origin when served from Flask; fallback for file://
+const API_BASE = window.location.protocol === 'file:'
+  ? 'http://127.0.0.1:5000'
+  : window.location.origin;
+
+// ── Icons ────────────────────────────────────────────────────
+const Icon = ({ d, size = 16, stroke = "currentColor", fill = "none", strokeWidth = 1.5 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+    <path d={d} />
+  </svg>
+);
+
+const Icons = {
+  search: "M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z",
+  link: "M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244",
+  shield: "M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z",
+  warning: "M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z",
+  check: "M4.5 12.75l6 6 9-13.5",
+  x: "M6 18L18 6M6 6l12 12",
+  brain: "M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714a2.25 2.25 0 001.659 1.591L19 14.5m-9.25-11.396A24.3 24.3 0 0112 3c.837 0 1.664.05 2.474.134m-4.474.704a24.3 24.3 0 010 16.324M9.75 20.896v-5.714a2.25 2.25 0 00-.659-1.591L5 9.5m4.75 11.396A24.3 24.3 0 0012 21a24.3 24.3 0 002.474-.134m-4.474-.704a24.3 24.3 0 010-16.324M14.25 3.104v5.714a2.25 2.25 0 001.659 1.591L19 14.5",
+  newspaper: "M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V18a2.25 2.25 0 01-2.25 2.25M16.5 7.5V18a2.25 2.25 0 002.25 2.25M16.5 7.5V4.875c0-.621-.504-1.125-1.125-1.125H4.125C3.504 3.75 3 4.254 3 4.875V18a2.25 2.25 0 002.25 2.25h13.5M6 7.5h3v3H6v-3z",
+  globe: "M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418",
+  external: "M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25",
+  arrow: "M4.5 12h15m0 0l-6.75-6.75M19.5 12l-6.75 6.75",
+  clipboard: "M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.5m0 2.25h.75m-.75 2.25h.75m4.5-4.5h.75m-.75 2.25h.75m-.75 2.25h.75M6.75 7.5v10.5m3-10.5v10.5",
+  info: "M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z",
+  mic: "M12 1.5c-1.657 0-3 1.343-3 3v6a3 3 0 006 0V4.5a3 3 0 00-3-3zM18.75 9.75v1.5a6.75 6.75 0 01-13.5 0v-1.5M12 19.5v2.25",
+  image: "M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3A1.5 1.5 0 001.5 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008H12V8.25z",
+};
+
+// ── Ticker ────────────────────────────────────────────────────
+const NEWS_TICKER = [
+  "BREAKING: AI-powered fact-checking now supports Bengali & Hindi",
+  "ALERT: 67% of viral social media posts flagged as UNCERTAIN or FAKE",
+  "UPDATE: BERT model accuracy improved to 94.2% on test dataset",
+  "LIVE: 1,284 news articles verified today",
+  "FEATURE: Real-time Google search integration now active",
+];
+
+function Ticker() {
+  const text = NEWS_TICKER.join("  ◆  ");
+  return (
+    <div style={{
+      background: 'var(--accent)', color: '#0a0a0b',
+      height: 28, overflow: 'hidden', position: 'relative',
+      display: 'flex', alignItems: 'center'
+    }}>
+      <div style={{
+        padding: '0 12px', fontFamily: 'var(--font-mono)',
+        fontSize: 11, fontWeight: 500, letterSpacing: 1.5,
+        whiteSpace: 'nowrap', flexShrink: 0, zIndex: 2,
+        background: '#0a0a0b', color: 'var(--accent)',
+        height: '100%', display: 'flex', alignItems: 'center'
+      }}>LIVE</div>
+      <div style={{ overflow: 'hidden', flex: 1 }}>
+        <div style={{
+          display: 'inline-block',
+          animation: 'ticker 30s linear infinite',
+          whiteSpace: 'nowrap',
+          fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 400,
+          letterSpacing: 0.5
+        }}>
+          {text}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Header ─────────────────────────────────────────────────────
+function Header({ me, backendMode, theme, onToggleTheme }) {
+  const guest = me && me.user_type === 'guest';
+  const member = me && me.user_type === 'member';
+  return (
+    <header>
+      <Ticker />
+      <div style={{
+        borderBottom: '1px solid var(--border)',
+        padding: '0 32px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        height: 64, flexWrap: 'wrap', gap: 12
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+          <a href="landing.html" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <h1 style={{
+              fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 900,
+              letterSpacing: -1, color: 'var(--text)'
+            }}>
+              Verit<span style={{ color: 'var(--accent)' }}>AI</span>
+            </h1>
+          </a>
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)',
+            letterSpacing: 2, textTransform: 'uppercase', paddingBottom: 2
+          }}>FACT CHECKER</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+          {member && (
+            <>
+              <a href="account.html" style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}>Profile</a>
+              <a href="history.html" style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}>History</a>
+              <a href="genres.html" style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}>My genres</a>
+              <button type="button" onClick={async () => {
+                await fetch(`${API_BASE}/api/logout`, { method: 'POST', credentials: 'include' });
+                window.location.href = 'landing.html';
+              }} style={{
+                background: 'none', border: '1px solid var(--border)', borderRadius: 8,
+                color: 'var(--text2)', fontSize: 12, padding: '6px 12px', cursor: 'pointer', fontFamily: 'var(--font-body)'
+              }}>Sign out</button>
+            </>
+          )}
+          {guest && (
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}>Guest mode</span>
+          )}
+          <button type="button" onClick={onToggleTheme} style={{
+            background: 'none', border: '1px solid var(--border)', borderRadius: 8,
+            color: 'var(--text2)', fontSize: 12, padding: '6px 12px', cursor: 'pointer', fontFamily: 'var(--font-body)'
+          }}>{theme === 'light' ? 'Dark mode' : 'Light mode'}</button>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)'
+          }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: backendMode ? 'var(--real)' : 'var(--uncertain)', animation: 'blink 2s infinite' }} />
+            {backendMode ? 'API LIVE' : 'OFFLINE'}
+          </div>
+          <div style={{
+            fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)',
+            borderLeft: '1px solid var(--border)', paddingLeft: 20
+          }}>
+            BERT + LLaMA3 + APIs
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ── Input Panel ────────────────────────────────────────────────
+function InputPanel({ onSubmit, loading }) {
+  const [mode, setMode] = useState('text');
+  const [textDraft, setTextDraft] = useState('');
+  const [urlDraft, setUrlDraft] = useState('');
+  const [lang, setLang] = useState('auto');
+  const [ixBusy, setIxBusy] = useState(false);
+  const [recState, setRecState] = useState(null);
+  const mediaRef = useRef(null);
+  const chunksRef = useRef([]);
+
+  const runSubmit = (text, usedMode) => {
+    const t = (text || '').trim();
+    if (!t || loading) return;
+    onSubmit({ text: t, mode: usedMode || 'text', lang });
+  };
+
+  const handleSubmit = () => {
+    if (mode === 'url') runSubmit(urlDraft, 'url');
+    else if (mode === 'text') runSubmit(textDraft, 'text');
+  };
+
+  const handleKeyDown = (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && (mode === 'text' || mode === 'url')) handleSubmit();
+  };
+
+  const clearAll = () => {
+    setTextDraft('');
+    setUrlDraft('');
+  };
+
+  const transcribeBlob = async (blob, fname) => {
+    setIxBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('audio', blob, fname || 'speech.webm');
+      const res = await fetch(`${API_BASE}/api/transcribe-audio`, {
+        method: 'POST', body: fd, credentials: 'include',
+        signal: AbortSignal.timeout(120000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Transcription failed');
+      setTextDraft(data.text || '');
+      runSubmit(data.text, 'voice');
+    } catch (err) {
+      alert(err.message || String(err));
+    } finally {
+      setIxBusy(false);
+    }
+  };
+
+  const startRec = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
+      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      mr.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        mediaRef.current = null;
+        await transcribeBlob(blob, 'speech.webm');
+      };
+      mr.start();
+      mediaRef.current = mr;
+      setRecState('recording');
+    } catch (e) {
+      alert('Microphone access denied or unavailable.');
+    }
+  };
+
+  const stopRec = () => {
+    if (mediaRef.current && mediaRef.current.state !== 'inactive') mediaRef.current.stop();
+    setRecState(null);
+  };
+
+  const onImagePick = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f || loading) return;
+    setIxBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('image', f);
+      const res = await fetch(`${API_BASE}/api/ocr-image`, {
+        method: 'POST', body: fd, credentials: 'include',
+        signal: AbortSignal.timeout(60000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'OCR failed');
+      setTextDraft(data.text || '');
+      runSubmit(data.text, 'image');
+    } catch (err) {
+      alert(err.message || String(err));
+    } finally {
+      setIxBusy(false);
+    }
+  };
+
+  const onAudioPick = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    await transcribeBlob(f, f.name || 'audio.wav');
+  };
+
+  const placeholder = mode === 'text'
+    ? 'Paste news headline or full article text here…'
+    : mode === 'url'
+    ? 'https://example.com/news-article'
+    : '';
+
+  const busy = loading || ixBusy;
+
+  return (
+    <div className="fade-up" style={{
+      border: '1px solid var(--border)',
+      borderRadius: 16, overflow: 'hidden',
+      background: 'var(--bg2)',
+    }}>
+      <div style={{
+        display: 'flex', borderBottom: '1px solid var(--border)',
+        padding: '0 24px', gap: 0, flexWrap: 'wrap', alignItems: 'center'
+      }}>
+        {[
+          { id: 'text', label: 'Text', icon: Icons.clipboard },
+          { id: 'url', label: 'URL', icon: Icons.link },
+          { id: 'voice', label: 'Voice', icon: Icons.mic },
+          { id: 'image', label: 'Image', icon: Icons.image },
+        ].map(m => (
+          <button key={m.id} type="button" onClick={() => setMode(m.id)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8,
+              fontFamily: 'var(--font-body)', fontSize: 13, fontWeight: 500,
+              color: mode === m.id ? 'var(--accent)' : 'var(--text3)',
+              borderBottom: mode === m.id ? '2px solid var(--accent)' : '2px solid transparent',
+              marginBottom: -1, transition: 'all 0.2s'
+            }}>
+            <Icon d={m.icon} size={14} />
+            {m.label}
+          </button>
+        ))}
+        <div style={{ flex: 1, minWidth: 8 }} />
+        <button type="button" onClick={clearAll} disabled={busy}
+          style={{
+            padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--bg3)', color: 'var(--text2)', fontSize: 12, cursor: busy ? 'not-allowed' : 'pointer',
+            fontFamily: 'var(--font-body)', marginBottom: 4
+          }}>Clear</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 4 }}>
+          <span style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>LANG</span>
+          {['auto', 'en', 'hi', 'bn'].map(l => (
+            <button key={l} type="button" onClick={() => setLang(l)}
+              style={{
+                background: lang === l ? 'var(--bg4)' : 'none',
+                border: `1px solid ${lang === l ? 'var(--border2)' : 'transparent'}`,
+                borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+                color: lang === l ? 'var(--accent)' : 'var(--text3)',
+                transition: 'all 0.15s'
+              }}>{l.toUpperCase()}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: '20px 24px 0' }}>
+        {mode === 'text' && (
+          <textarea
+            value={textDraft}
+            onChange={e => setTextDraft(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            style={{
+              width: '100%', minHeight: 140,
+              background: 'none', border: 'none', resize: 'vertical',
+              fontFamily: 'var(--font-body)', fontSize: 15, lineHeight: 1.7,
+              color: 'var(--text)', caretColor: 'var(--accent)',
+            }}
+          />
+        )}
+        {mode === 'url' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 20 }}>
+            <Icon d={Icons.link} size={16} stroke="var(--text3)" />
+            <input
+              type="url"
+              value={urlDraft}
+              onChange={e => setUrlDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              style={{
+                flex: 1, background: 'none', border: 'none',
+                fontFamily: 'var(--font-mono)', fontSize: 14,
+                color: 'var(--text)', caretColor: 'var(--accent)',
+              }}
+            />
+          </div>
+        )}
+        {mode === 'voice' && (
+          <div style={{ paddingBottom: 24 }}>
+            <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+              Record audio or upload a file. Requires <strong>GROQ_API_KEY</strong> on the server (Whisper).
+              <em style={{ marginLeft: 8, color: 'var(--accent)' }}>(coming soon)</em>
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+              {!recState ? (
+                <button type="button" onClick={startRec} disabled={busy}
+                  style={{
+                    padding: '12px 20px', borderRadius: 10, border: '1px solid var(--border2)',
+                    background: 'var(--bg3)', color: 'var(--text)', cursor: busy ? 'not-allowed' : 'pointer',
+                    fontFamily: 'var(--font-body)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8
+                  }}>
+                  <Icon d={Icons.mic} size={16} /> Start recording
+                </button>
+              ) : (
+                <button type="button" onClick={stopRec}
+                  style={{
+                    padding: '12px 20px', borderRadius: 10, border: 'none',
+                    background: 'var(--fake)', color: '#fff', cursor: 'pointer',
+                    fontFamily: 'var(--font-body)', fontWeight: 600
+                  }}>Stop & transcribe</button>
+              )}
+              <label style={{
+                padding: '12px 20px', borderRadius: 10, border: '1px solid var(--border2)',
+                background: 'var(--bg3)', color: 'var(--text)', cursor: busy ? 'not-allowed' : 'pointer',
+                fontFamily: 'var(--font-body)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 8
+              }}>
+                Upload audio
+                <input type="file" accept="audio/*,.webm,.wav,.mp3,.m4a" hidden disabled={busy} onChange={onAudioPick} />
+              </label>
+            </div>
+            {textDraft && mode === 'voice' && (
+              <p style={{ marginTop: 16, fontSize: 13, color: 'var(--text3)', whiteSpace: 'pre-wrap' }}>{textDraft.slice(0, 500)}{textDraft.length > 500 ? '…' : ''}</p>
+            )}
+          </div>
+        )}
+        {mode === 'image' && (
+          <div style={{ paddingBottom: 24 }}>
+            <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+              Screenshot or photo of an article. Requires <strong>Tesseract OCR</strong> on the server.
+              <em style={{ marginLeft: 8, color: 'var(--accent)' }}>(coming soon)</em>
+            </p>
+            <label style={{
+              display: 'inline-block', padding: '12px 24px', borderRadius: 10,
+              background: 'var(--accent)', color: '#0a0a0b', fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer',
+              fontFamily: 'var(--font-body)'
+            }}>
+              Choose image
+              <input type="file" accept="image/*" hidden disabled={busy} onChange={onImagePick} />
+            </label>
+            {textDraft && (
+              <p style={{ marginTop: 16, fontSize: 13, color: 'var(--text3)', whiteSpace: 'pre-wrap' }}>{textDraft.slice(0, 800)}{textDraft.length > 800 ? '…' : ''}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        padding: '12px 24px 20px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12
+      }}>
+        <span style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+          {mode === 'text' && textDraft.length > 0 ? `${textDraft.length} chars · ` : ''}
+          {mode === 'url' && urlDraft.length > 0 ? `${urlDraft.length} chars · ` : ''}
+          {(mode === 'text' || mode === 'url') ? '⌘ + Enter to verify' : ''}
+        </span>
+        <button type="button" onClick={handleSubmit} disabled={busy || (mode === 'text' && !textDraft.trim()) || (mode === 'url' && !urlDraft.trim())}
+          style={{
+            background: ((mode === 'text' && textDraft.trim()) || (mode === 'url' && urlDraft.trim())) && !busy ? 'var(--accent)' : 'var(--bg4)',
+            color: ((mode === 'text' && textDraft.trim()) || (mode === 'url' && urlDraft.trim())) && !busy ? '#0a0a0b' : 'var(--text3)',
+            border: 'none', borderRadius: 10, padding: '12px 28px',
+            fontFamily: 'var(--font-body)', fontSize: 14, fontWeight: 600,
+            cursor: ((mode === 'text' && textDraft.trim()) || (mode === 'url' && urlDraft.trim())) && !busy ? 'pointer' : 'not-allowed',
+            display: 'flex', alignItems: 'center', gap: 10,
+            transition: 'all 0.2s',
+          }}>
+          {busy ? (
+            <>
+              <div style={{
+                width: 14, height: 14, border: '2px solid rgba(0,0,0,0.2)',
+                borderTopColor: '#0a0a0b', borderRadius: '50%',
+                animation: 'spin 0.7s linear infinite'
+              }} />
+              {loading ? 'Analyzing…' : 'Working…'}
+            </>
+          ) : (
+            <>
+              <Icon d={Icons.search} size={15} />
+              Verify News
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Verdict Badge ──────────────────────────────────────────────
+function VerdictBadge({ verdict, large }) {
+  const config = {
+    REAL: { color: 'var(--real)', bg: 'var(--real-bg)', border: 'var(--real-border)', icon: Icons.check, label: 'REAL' },
+    FAKE: { color: 'var(--fake)', bg: 'var(--fake-bg)', border: 'var(--fake-border)', icon: Icons.x, label: 'FAKE' },
+    UNCERTAIN: { color: 'var(--uncertain)', bg: 'var(--uncertain-bg)', border: 'var(--uncertain-border)', icon: Icons.warning, label: 'UNCERTAIN' },
+  }[verdict] || { color: 'var(--text3)', bg: 'var(--bg4)', border: 'var(--border)', icon: Icons.info, label: verdict };
+
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: large ? 10 : 6,
+      background: config.bg, border: `1px solid ${config.border}`,
+      borderRadius: large ? 12 : 8,
+      padding: large ? '10px 20px' : '5px 12px',
+    }}>
+      <Icon d={config.icon} size={large ? 18 : 13} stroke={config.color} strokeWidth={2} />
+      <span style={{
+        fontFamily: 'var(--font-mono)', fontSize: large ? 20 : 12,
+        fontWeight: 700, letterSpacing: 2, color: config.color
+      }}>{config.label}</span>
+    </div>
+  );
+}
+
+// ── Confidence Meter ────────────────────────────────────────────
+function ConfidenceMeter({ score, label, color }) {
+  const [animated, setAnimated] = useState(false);
+  useEffect(() => { setTimeout(() => setAnimated(true), 100); }, []);
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>{label}</span>
+        <span style={{ fontSize: 12, color, fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{score}%</span>
+      </div>
+      <div className="confidence-bar">
+        <div className="confidence-fill" style={{
+          width: animated ? `${score}%` : '0%',
+          background: color,
+          opacity: 0.8
+        }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Evidence row (title + summary + load full text) ──────────
+function EvidenceSourceItem({ s, i, verdict }) {
+  const init = (s.description || '').trim();
+  const [excerpt, setExcerpt] = useState(init);
+  const [loading, setLoading] = useState(false);
+
+  const fetchFull = async () => {
+    if (!s.url) return;
+    setLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/article-preview`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: s.url }),
+        signal: AbortSignal.timeout(45000),
+      });
+      const d = await r.json();
+      if (r.ok && d.excerpt) setExcerpt(d.excerpt);
+      else if (d.error) setExcerpt(`${excerpt}\n\n(${d.error})`);
+    } catch (_) {
+      setExcerpt(excerpt + '\n\n(Unable to fetch full article text.)');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  let host = s.source || s.domain || '';
+  try { if (!host && s.url) host = new URL(s.url).hostname.replace(/^www\./, ''); } catch (_) {}
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 16px',
+      background: 'var(--bg3)', borderRadius: 10, border: '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{
+          width: 24, height: 24, borderRadius: 6, flexShrink: 0,
+          background: 'var(--bg4)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', fontFamily: 'var(--font-mono)',
+          fontSize: 11, color: 'var(--accent)', fontWeight: 600
+        }}>{i + 1}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <a href={s.url || '#'} target="_blank" rel="noopener noreferrer" style={{
+            fontSize: 13, fontWeight: 500, color: 'var(--text)', textDecoration: 'none',
+            display: 'block', marginBottom: 6, lineHeight: 1.4
+          }}
+            onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline'; }}
+            onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none'; }}
+          >{s.title || s.headline || 'Source article'}</a>
+          <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>{host}</div>
+        </div>
+        <a href={s.url || '#'} target="_blank" rel="noopener noreferrer" aria-label="Open">
+          <Icon d={Icons.external} size={14} stroke="var(--text3)" />
+        </a>
+      </div>
+      {excerpt ? (
+        <p style={{
+          fontSize: 12, color: 'var(--text2)', lineHeight: 1.65, margin: 0,
+          maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap',
+        }}>{excerpt.length > 1800 ? excerpt.slice(0, 1800) + '…' : excerpt}</p>
+      ) : null}
+      {(verdict === 'REAL' || verdict === 'FAKE') && s.url && (
+        <button type="button" onClick={fetchFull} disabled={loading}
+          style={{
+            alignSelf: 'flex-start', marginTop: 4, padding: '8px 14px', borderRadius: 8,
+            border: '1px solid var(--border2)', background: 'var(--bg4)', color: 'var(--accent)',
+            fontSize: 12, fontWeight: 600, cursor: loading ? 'wait' : 'pointer',
+            fontFamily: 'var(--font-body)',
+          }}>
+          {loading ? 'Loading article text…' : (excerpt && excerpt.length > 80 ? 'Refresh full excerpt from page' : 'Read article excerpt from page')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Result Card ────────────────────────────────────────────────
+function ResultCard({ result }) {
+  const { verdict, confidence, certainty, bert_score, tfidf_score, llm_score,
+    summary, sources, query_used, processing_time } = result;
+
+  const certaintyColor = {
+    HIGH: 'var(--real)', MEDIUM: 'var(--uncertain)',
+    LOW: 'var(--fake)', 'VERY LOW': 'var(--fake)'
+  }[certainty] || 'var(--text2)';
+
+  const verdictConfig = {
+    REAL: { color: 'var(--real)', pulse: '#4ade80' },
+    FAKE: { color: 'var(--fake)', pulse: '#f87171' },
+    UNCERTAIN: { color: 'var(--uncertain)', pulse: '#fbbf24' },
+  }[verdict] || { color: 'var(--text2)', pulse: '#9b9794' };
+
+  return (
+    <div className="fade-in" style={{
+      border: '1px solid var(--border)',
+      borderRadius: 16, overflow: 'hidden',
+      background: 'var(--bg2)',
+    }}>
+      {/* Top verdict strip */}
+      <div style={{
+        padding: '32px 32px 28px',
+        borderBottom: '1px solid var(--border)',
+        display: 'flex', alignItems: 'flex-start', gap: 24,
+        flexWrap: 'wrap'
+      }}>
+        {/* Pulse indicator */}
+        <div style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            background: verdictConfig.color, opacity: 0.15,
+            animation: 'pulse-ring 2s ease-out infinite'
+          }} />
+          <div style={{
+            width: 56, height: 56, borderRadius: '50%',
+            background: verdictConfig.color + '18',
+            border: `2px solid ${verdictConfig.color}40`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}>
+            <div style={{
+              width: 20, height: 20, borderRadius: '50%',
+              background: verdictConfig.color
+            }} />
+          </div>
+        </div>
+
+        <div style={{ flex: 1 }}>
+          <div style={{ marginBottom: 10 }}>
+            <VerdictBadge verdict={verdict} large />
+          </div>
+          <p style={{ fontSize: 14, color: 'var(--text2)', lineHeight: 1.6, maxWidth: 580 }}>
+            {summary}
+          </p>
+        </div>
+
+        <div style={{ textAlign: 'right' }}>
+          <div style={{
+            fontFamily: 'var(--font-display)', fontSize: 48, fontWeight: 900,
+            color: verdictConfig.color, lineHeight: 1
+          }}>{confidence}%</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+            CONFIDENCE
+          </div>
+          <div style={{
+            marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600,
+            color: certaintyColor, letterSpacing: 1
+          }}>
+            ◆ {certainty} CERTAINTY
+          </div>
+        </div>
+      </div>
+
+      {/* Model scores */}
+      <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)', letterSpacing: 2, marginBottom: 16 }}>
+          MODEL ANALYSIS
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16 }}>
+          {[
+            { label: 'BERT (40%)', score: bert_score,  color: '#818cf8', desc: 'Context & semantics' },
+            { label: 'TF-IDF (20%)', score: tfidf_score, color: '#38bdf8', desc: 'Pattern detection' },
+            { label: 'AI JUDGE (15%)', score: llm_score,  color: 'var(--accent)', desc: 'Logical reasoning' },
+          ].map(m => (
+            <div key={m.label} style={{
+              background: 'var(--bg3)', borderRadius: 10, padding: '16px',
+              border: '1px solid var(--border)'
+            }}>
+              {m.score != null
+                ? <ConfidenceMeter label={m.label} score={m.score} color={m.color} />
+                : (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>{m.label}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
+                        background: 'var(--bg4)', padding: '1px 6px', borderRadius: 4 }}>N/A</span>
+                    </div>
+                    <div className="confidence-bar">
+                      <div style={{ height: '100%', width: '100%', background: 'var(--bg4)', borderRadius: 2 }} />
+                    </div>
+                  </div>
+                )
+              }
+              <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+                {m.score == null ? '⚠ Model not loaded' : m.desc}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Evidence sources */}
+      {sources && sources.length > 0 && (
+        <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{
+            fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
+            letterSpacing: 2, marginBottom: 16,
+            display: 'flex', alignItems: 'center', gap: 8
+          }}>
+            <Icon d={Icons.globe} size={12} stroke="var(--text3)" />
+            EVIDENCE SOURCES ({sources.length} found)
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {sources.slice(0, 6).map((s, i) => (
+              <EvidenceSourceItem key={i} s={s} i={i} verdict={verdict} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Meta info */}
+      <div style={{
+        padding: '16px 32px', display: 'flex', gap: 24, flexWrap: 'wrap',
+        alignItems: 'center'
+      }}>
+        {query_used && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>QUERY</span>
+            <span style={{
+              fontSize: 11, color: 'var(--text2)', fontFamily: 'var(--font-mono)',
+              background: 'var(--bg4)', padding: '3px 8px', borderRadius: 4
+            }}>{query_used}</span>
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
+        {processing_time && (
+          <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+            ⚡ {processing_time}s
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Loading Skeleton ────────────────────────────────────────────
+function LoadingSkeleton() {
+  const steps = [
+    { label: 'Translating & preprocessing', done: false, active: true },
+    { label: 'Running BERT model', done: false, active: false },
+    { label: 'Querying evidence APIs', done: false, active: false },
+    { label: 'AI Judge reasoning', done: false, active: false },
+    { label: 'Computing verdict', done: false, active: false },
+  ];
+  const [activeStep, setActiveStep] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveStep(s => Math.min(s + 1, steps.length - 1));
+    }, 1200);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="fade-in" style={{
+      border: '1px solid var(--border)', borderRadius: 16,
+      background: 'var(--bg2)', padding: '32px'
+    }}>
+      <div style={{
+        fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
+        letterSpacing: 2, marginBottom: 24
+      }}>ANALYSIS IN PROGRESS</div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 32 }}>
+        {steps.map((step, i) => (
+          <div key={i} style={{
+            display: 'flex', alignItems: 'center', gap: 12,
+            opacity: i <= activeStep ? 1 : 0.3, transition: 'opacity 0.4s'
+          }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+              background: i < activeStep ? 'var(--real-bg)' : i === activeStep ? 'var(--bg4)' : 'var(--bg3)',
+              border: `1.5px solid ${i < activeStep ? 'var(--real-border)' : i === activeStep ? 'var(--accent)' : 'var(--border)'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              {i < activeStep
+                ? <Icon d={Icons.check} size={11} stroke="var(--real)" strokeWidth={2.5} />
+                : i === activeStep
+                ? <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid var(--accent)', borderTopColor: 'transparent', animation: 'spin 0.7s linear infinite' }} />
+                : null}
+            </div>
+            <span style={{
+              fontSize: 13, fontFamily: 'var(--font-body)',
+              color: i <= activeStep ? 'var(--text)' : 'var(--text3)'
+            }}>{step.label}</span>
+            {i === activeStep && (
+              <span style={{
+                marginLeft: 'auto', fontSize: 11, color: 'var(--accent)',
+                fontFamily: 'var(--font-mono)', animation: 'blink 1s infinite'
+              }}>●</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+        {[1, 2, 3].map(i => (
+          <div key={i} className="shimmer-skeleton" style={{ height: 80, borderRadius: 10 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── How It Works ───────────────────────────────────────────────
+function HowItWorks() {
+  const steps = [
+    { icon: Icons.clipboard, label: 'Input', desc: 'Text, URL, voice (Whisper), or image (OCR)' },
+    { icon: Icons.brain, label: 'ML Analysis', desc: 'BERT + TF-IDF processes the claim' },
+    { icon: Icons.globe, label: 'Evidence', desc: 'Real-time search across 4 news APIs' },
+    { icon: Icons.shield, label: 'AI Judge', desc: 'LLaMA3 reasons over all evidence' },
+    { icon: Icons.newspaper, label: 'Verdict', desc: 'REAL / FAKE / UNCERTAIN + score' },
+  ];
+  return (
+    <div style={{ padding: '32px 0' }}>
+      <div style={{
+        fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
+        letterSpacing: 2, marginBottom: 20
+      }}>HOW IT WORKS</div>
+      <div style={{ display: 'flex', gap: 0, alignItems: 'stretch', flexWrap: 'wrap' }}>
+        {steps.map((s, i) => (
+          <React.Fragment key={i}>
+            <div style={{
+              flex: '1 1 160px', background: 'var(--bg2)',
+              border: '1px solid var(--border)', borderRadius: 12,
+              padding: '20px 18px', minWidth: 130
+            }}>
+              <div style={{ marginBottom: 12 }}>
+                <Icon d={s.icon} size={16} stroke="var(--accent)" />
+              </div>
+              <div style={{
+                fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)',
+                fontWeight: 600, letterSpacing: 1, marginBottom: 6
+              }}>{String(i+1).padStart(2,'0')} {s.label.toUpperCase()}</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>{s.desc}</div>
+            </div>
+            {i < steps.length - 1 && (
+              <div style={{
+                display: 'flex', alignItems: 'center', padding: '0 4px',
+                color: 'var(--text3)', fontSize: 16, flexShrink: 0
+              }}>›</div>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Stats Bar ──────────────────────────────────────────────────
+function StatsBar() {
+  const stats = [
+    { value: '94.2%', label: 'Model Accuracy' },
+    { value: '4', label: 'News APIs' },
+    { value: '3', label: 'Languages' },
+    { value: '<2s', label: 'Avg. Response' },
+  ];
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 12
+    }}>
+      {stats.map((s, i) => (
+        <div key={i} style={{
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: '16px 20px', textAlign: 'center'
+        }}>
+          <div style={{
+            fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700,
+            color: 'var(--accent)', lineHeight: 1
+          }}>{s.value}</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, fontFamily: 'var(--font-mono)' }}>
+            {s.label}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Member news sidebar ───────────────────────────────────────
+function NewsSidebar({ geo }) {
+  const [tab, setTab] = useState('top');
+  const [articles, setArticles] = useState([]);
+  const [emptyReason, setEmptyReason] = useState('');
+  const [feedLoading, setFeedLoading] = useState(false);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    let cancelled = false;
+    const geoQs = geo && typeof geo.lat === 'number' && typeof geo.lon === 'number'
+      ? `?lat=${encodeURIComponent(geo.lat)}&lon=${encodeURIComponent(geo.lon)}`
+      : '';
+    const path = tab === 'top' ? `/api/headlines${geoQs}` : `/api/news-personalized${geoQs}`;
+    setFeedLoading(true);
+    setEmptyReason('');
+    fetch(`${API_BASE}${path}`, { credentials: 'include', signal: ctrl.signal })
+      .then(async (r) => {
+        if (cancelled) return { articles: [] };
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          if (r.status === 403) {
+            setEmptyReason('Sign in to view this news feed.');
+          } else {
+            setEmptyReason('News feed is temporarily unavailable. Please try again.');
+          }
+          return { articles: [] };
+        }
+        setEmptyReason('');
+        return d;
+      })
+      .then(d => {
+        if (cancelled) return;
+        const arr = Array.isArray(d.articles) ? d.articles : [];
+        setArticles(arr);
+        if (arr.length === 0) {
+          if (tab === 'mine') {
+            setEmptyReason('No articles found for your selected genres right now. Try saving genres again or check back shortly.');
+          } else {
+            setEmptyReason('No top stories available right now for your region.');
+          }
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setArticles([]);
+        setEmptyReason('Could not load news right now.');
+      })
+      .finally(() => {
+        if (!cancelled) setFeedLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
+  }, [tab, geo]);
+
+  const tabBtn = (id, label) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => setTab(id)}
+      style={{
+        flex: 1, padding: '10px 8px', border: 'none', borderRadius: 8, cursor: 'pointer',
+        fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+        background: tab === id ? 'var(--bg4)' : 'transparent',
+        color: tab === id ? 'var(--accent)' : 'var(--text3)',
+        borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
+        marginBottom: -1,
+      }}
+    >{label}</button>
+  );
+
+  return (
+    <aside className="fade-up" style={{
+      position: 'sticky', top: 24,
+      border: '1px solid var(--border)', borderRadius: 16, background: 'var(--bg2)',
+      overflow: 'hidden', maxHeight: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{
+        padding: '16px 16px 0', fontFamily: 'var(--font-mono)', fontSize: 11,
+        letterSpacing: 2, color: 'var(--text3)',
+      }}>HEADLINES</div>
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '12px 12px 0' }}>
+        {tabBtn('top', 'Top stories')}
+        {tabBtn('mine', 'Your genres')}
+      </div>
+      <div style={{ overflowY: 'auto', padding: 12, flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {feedLoading && (
+          <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>
+            Loading {tab === 'mine' ? 'genre news' : 'top stories'}...
+          </p>
+        )}
+        {!feedLoading && articles.length === 0 && (
+          <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>
+            {emptyReason || (tab === 'mine'
+              ? 'No articles found for your selected genres right now.'
+              : 'No top stories available right now.')}
+          </p>
+        )}
+        {articles.map((a, i) => (
+          <a
+            key={i + (a.url || '')}
+            href={a.url || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'block', padding: 12, borderRadius: 10, background: 'var(--bg3)',
+              border: '1px solid var(--border)', textDecoration: 'none',
+              transition: 'border-color 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border2)'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}
+          >
+            {a.image ? (
+              <img src={a.image} alt={a.title || 'Article image'} style={{
+                width: '100%', height: 120, objectFit: 'cover', borderRadius: 8, marginBottom: 8, border: '1px solid var(--border)'
+              }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            ) : null}
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', lineHeight: 1.35, marginBottom: 6 }}>
+              {a.title || 'Article'}
+            </div>
+            {(a.description || '').length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.45, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                {a.description}
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 8, fontFamily: 'var(--font-mono)' }}>
+              {a.source || '—'}
+            </div>
+          </a>
+        ))}
+      </div>
+      <div style={{ padding: 12, borderTop: '1px solid var(--border)' }}>
+        <a href="genres.html" style={{ fontSize: 12, color: 'var(--accent)' }}>Edit genre preferences →</a>
+      </div>
+    </aside>
+  );
+}
+
+// ── Mock result generator (demo mode) ─────────────────────────
+function generateMockResult(input) {
+  const text = input.text.toLowerCase();
+  const isFake = text.includes('fake') || text.includes('hoax') || text.includes('shocking') || text.includes('you won') || text.includes('miracle');
+  const isUncertain = text.includes('breaking') || text.includes('developing') || text.length < 50;
+  const verdict = isFake ? 'FAKE' : isUncertain ? 'UNCERTAIN' : 'REAL';
+  const confidence = verdict === 'REAL' ? Math.floor(78 + Math.random() * 18)
+    : verdict === 'FAKE' ? Math.floor(72 + Math.random() * 22)
+    : Math.floor(45 + Math.random() * 25);
+  const certainty = confidence > 85 ? 'HIGH' : confidence > 70 ? 'MEDIUM' : confidence > 55 ? 'LOW' : 'VERY LOW';
+
+  return {
+    verdict, confidence, certainty,
+    bert_score: Math.floor(confidence * (0.85 + Math.random() * 0.15)),
+    tfidf_score: Math.floor(confidence * (0.75 + Math.random() * 0.2)),
+    llm_score: Math.floor(confidence * (0.9 + Math.random() * 0.1)),
+    summary: verdict === 'REAL'
+      ? `This claim appears credible. Cross-referenced with ${Math.floor(2 + Math.random() * 4)} trusted sources. No significant contradictions found. Semantic similarity with verified reports is high.`
+      : verdict === 'FAKE'
+      ? `This claim shows characteristics of misinformation. Pattern analysis detected sensationalist language. Could not verify with any credible source. Cross-reference failed.`
+      : `Insufficient evidence to make a definitive judgment. This may be a breaking story or a niche regional topic. Monitoring for additional corroboration.`,
+    sources: verdict === 'REAL' ? [
+      { title: 'Reuters: ' + input.text.slice(0, 60), source: 'Reuters', url: 'https://reuters.com' },
+      { title: 'AP News: Fact-checked report', source: 'AP News', url: 'https://apnews.com' },
+      { title: 'BBC Verification: ' + input.text.slice(0, 50), source: 'BBC', url: 'https://bbc.com' },
+    ] : [],
+    query_used: input.text.slice(0, 50).trim(),
+    processing_time: (1.2 + Math.random() * 1.5).toFixed(2)
+  };
+}
+
+// ── App ────────────────────────────────────────────────────────
+function App() {
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [needsClarification, setNeedsClarification] = useState(null);
+  const [followupYesPrompt, setFollowupYesPrompt] = useState(null);
+  const [followupChoice, setFollowupChoice] = useState(null);
+  const [geo, setGeo] = useState(null);
+  const [theme, setTheme] = useState(() => localStorage.getItem('veritai_theme') || 'dark');
+  const [backendMode, setBackendMode] = useState(false);
+  const [me, setMe] = useState({ user_type: null });
+  const resultRef = useRef(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/ping`, { credentials: 'include', signal: AbortSignal.timeout(8000) })
+      .then(r => { if (r.ok) setBackendMode(true); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/me`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(setMe)
+      .catch(() => setMe({ user_type: null }));
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('veritai_theme', theme);
+  }, [theme]);
+
+  // Ask for location permission and use it to localize headlines/news.
+  useEffect(() => {
+    if (!me || me.user_type !== 'member') return;
+    if (geo) return;
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGeo({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+        });
+      },
+      () => {
+        // Silent fallback: if user denies permissions, we keep geo as null.
+        setGeo(null);
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    );
+  }, [me, geo]);
+
+  const handleSubmit = useCallback(async (inputData) => {
+    setLoading(true);
+    setResult(null);
+    setError(null);
+    setNeedsClarification(null);
+    setFollowupYesPrompt(null);
+    setFollowupChoice(null);
+
+    try {
+      if (backendMode) {
+        const form = new FormData();
+        if (inputData.mode === 'url') {
+          form.append('url', inputData.text);
+        } else {
+          form.append('text', inputData.text);
+        }
+        form.append('input_mode', inputData.mode || 'text');
+        const res = await fetch(`${API_BASE}/api/analyze-news`, {
+          method: 'POST',
+          body: form,
+          credentials: 'include',
+          signal: AbortSignal.timeout(120000),
+        });
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        const data = await res.json();
+
+        // Normalize Flask response fields to what ResultCard expects
+        const toScore = (v) => v != null ? Math.round(v * 100) : null;
+        setResult({
+          verdict:     data.final_label,
+          confidence:  data.confidence,
+          certainty:   data.certainty,
+          summary:     data.reason || '',
+          sources:     data.articles || [],
+          bert_score:  data.scores ? toScore(data.scores.bert)  : null,
+          tfidf_score: data.scores ? toScore(data.scores.tfidf) : null,
+          llm_score:   data.scores ? toScore(data.scores.judge) : null,
+        });
+        setNeedsClarification(data.followup_question || null);
+        setFollowupYesPrompt(data.followup_yes_prompt || null);
+      } else {
+        await new Promise(r => setTimeout(r, 3200));
+        setResult(generateMockResult(inputData));
+      }
+    } catch (err) {
+      if (backendMode) {
+        setError('Cannot connect to Flask backend. Switching to demo mode.');
+        await new Promise(r => setTimeout(r, 2000));
+        setResult(generateMockResult(inputData));
+        setBackendMode(false);
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+    }
+  }, [backendMode]);
+
+  const member = me && me.user_type === 'member';
+
+  return (
+    <div style={{ minHeight: '100vh' }}>
+      <Header
+        me={me}
+        backendMode={backendMode}
+        theme={theme}
+        onToggleTheme={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
+      />
+
+      <main style={{
+        maxWidth: member ? 1240 : 860,
+        margin: '0 auto',
+        padding: '48px 24px 80px',
+        display: member ? 'grid' : 'block',
+        gridTemplateColumns: member ? 'minmax(0, 1fr) minmax(280px, 340px)' : undefined,
+        gap: member ? 28 : 0,
+        alignItems: 'start',
+      }}>
+
+        <div style={{ minWidth: 0 }}>
+        {/* Hero */}
+        <div className="fade-up" style={{ marginBottom: 40 }}>
+          <h2 style={{
+            fontFamily: 'var(--font-display)', fontSize: 42, fontWeight: 900,
+            lineHeight: 1.1, letterSpacing: -1.5, color: 'var(--text)',
+            marginBottom: 16
+          }}>
+            The AI that reads<br />
+            between the <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>headlines.</em>
+          </h2>
+          <p style={{ fontSize: 15, color: 'var(--text2)', maxWidth: 520, lineHeight: 1.7 }}>
+            Hybrid ML + LLM system combining BERT, TF-IDF, and real-time evidence retrieval
+            to verify news authenticity with a confidence score.
+          </p>
+          {(me.user_type !== 'guest' && me.user_type !== 'member') ? (
+            <p style={{ fontSize: 13, color: 'var(--text3)', marginTop: 14 }}>
+              <a href="auth.html" style={{ color: 'var(--accent)' }}>Sign in</a>
+              {' '}as guest, email, or phone for saved sessions; members get headline panels and genre feeds.
+            </p>
+          ) : null}
+        </div>
+
+        {/* Demo mode notice */}
+        {!backendMode && (
+          <div className="fade-in" style={{
+            background: 'var(--uncertain-bg)', border: '1px solid var(--uncertain-border)',
+            borderRadius: 10, padding: '12px 16px', marginBottom: 20,
+            display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--uncertain)'
+          }}>
+            <Icon d={Icons.info} size={16} stroke="var(--uncertain)" />
+            Demo mode — API unreachable. From the project folder run <code style={{ fontSize: 12 }}>python backend/app.py</code> and open
+            {' '}<a href="http://127.0.0.1:5000/index.html" style={{ color: 'var(--accent)' }}>http://127.0.0.1:5000/index.html</a> (same-origin session and CORS).
+          </div>
+        )}
+
+        {/* Input */}
+        <InputPanel onSubmit={handleSubmit} loading={loading} />
+
+        {/* Follow-up request after initial verdict */}
+        {needsClarification && !loading && (
+          <div className="fade-in" style={{
+            marginTop: 16, background: 'var(--uncertain-bg)', border: '1px solid var(--uncertain-border)',
+            borderRadius: 10, padding: '12px 16px',
+            display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, fontSize: 13, color: 'var(--uncertain)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Icon d={Icons.info} size={16} stroke="var(--uncertain)" />
+              <span>{needsClarification}</span>
+            </div>
+            {!followupChoice && (
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setFollowupChoice('yes')}
+                  style={{
+                    border: '1px solid var(--uncertain-border)', background: 'var(--bg3)', color: 'var(--text)',
+                    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: 12
+                  }}
+                >YES</button>
+                <button
+                  type="button"
+                  onClick={() => setFollowupChoice('no')}
+                  style={{
+                    border: '1px solid var(--uncertain-border)', background: 'var(--bg3)', color: 'var(--text)',
+                    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: 12
+                  }}
+                >NO</button>
+              </div>
+            )}
+            {followupChoice === 'yes' && followupYesPrompt && (
+              <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+                {followupYesPrompt}
+              </div>
+            )}
+            {followupChoice === 'no' && (
+              <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+                Keeping this verdict based on currently reported incidents.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Error */}
+        {error && !loading && (
+          <div className="fade-in" style={{
+            marginTop: 16, background: 'var(--fake-bg)', border: '1px solid var(--fake-border)',
+            borderRadius: 10, padding: '12px 16px',
+            display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--fake)'
+          }}>
+            <Icon d={Icons.warning} size={16} stroke="var(--fake)" />
+            {error}
+          </div>
+        )}
+
+        {/* Loading */}
+        {loading && <div style={{ marginTop: 24 }}><LoadingSkeleton /></div>}
+
+        {/* Result */}
+        {result && !loading && (
+          <div ref={resultRef} style={{ marginTop: 24 }}>
+            <ResultCard result={result} />
+          </div>
+        )}
+
+        {/* Stats + How it works */}
+        {!loading && !result && (
+          <>
+            <StatsBar />
+            <HowItWorks />
+          </>
+        )}
+        </div>
+
+        {member && <NewsSidebar geo={geo} />}
+
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VeritAI — Profile</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0b; --bg2: #111113; --border: rgba(255,255,255,0.08);
+      --text: #f0ede8; --muted: #9b9794; --accent: #e8c97d;
+      --real: #4ade80; --fake: #f87171; --unc: #fbbf24;
+    }
+    :root[data-theme='light'] {
+      --bg: #f6f7fb; --bg2: #ffffff; --border: rgba(15,23,42,0.12);
+      --text: #111827; --muted: #6b7280; --accent: #e8c97d;
+      --real: #16a34a; --fake: #dc2626; --unc: #f59e0b;
+    }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 32px 20px 80px; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    h1 { font-family: 'Playfair Display', serif; font-size: 26px; margin-bottom: 8px; }
+    h1 span { color: var(--accent); }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    input, .ro {
+      width: 100%; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg2); color: var(--text); margin-bottom: 16px; font-family: inherit;
+    }
+    .ro { color: var(--muted); font-size: 14px; }
+    .btn {
+      padding: 12px 24px; border-radius: 10px; border: none; background: var(--accent);
+      color: var(--bg); font-weight: 600; cursor: pointer; font-family: inherit;
+    }
+    .links { margin-top: 24px; }
+    .links a { color: var(--accent); font-size: 14px; margin-right: 16px; }
+    .err { color: var(--fake); margin-top: 12px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:18px;">
+      <a href="index.html" style="text-decoration:none; color:inherit;">
+        <h1 style="margin:0;">Verit<span>AI</span></h1>
+      </a>
+      <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+        <a href="index.html" style="color: var(--accent); font-size: 13px; text-decoration:none;">Detector</a>
+        <a href="genres.html" style="color: var(--accent); font-size: 13px; text-decoration:none;">Genres</a>
+        <a href="history.html" style="color: var(--accent); font-size: 13px; text-decoration:none;">History</a>
+        <button type="button" id="themeBtn" style="
+          padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border);
+          background: var(--bg2); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600;
+        ">Light mode</button>
+      </div>
+    </div>
+
+    <p style="color: var(--muted); font-size: 14px; margin-bottom:18px;">Profile settings</p>
+    <p class="err" id="prof-err"></p>
+    <label>Email</label>
+    <div class="ro" id="p-email">—</div>
+    <label>Phone</label>
+    <div class="ro" id="p-phone">—</div>
+    <label>Display name</label>
+    <input type="text" id="p-name" maxlength="200" placeholder="How we greet you" />
+    <button type="button" class="btn" id="p-save">Save profile</button>
+
+    <div class="links">
+      <a href="index.html">Home</a>
+      <a href="auth.html">Sign in</a>
+    </div>
+  </div>
+
+  <script>
+    const API = location.protocol === 'file:' ? 'http://127.0.0.1:5000' : location.origin;
+    (function () {
+      const saved = localStorage.getItem('veritai_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', saved);
+      const btn = document.getElementById('themeBtn');
+      const cur = () => localStorage.getItem('veritai_theme') || 'dark';
+      const sync = () => { btn.textContent = (cur() === 'light') ? 'Dark mode' : 'Light mode'; };
+      sync();
+      btn.onclick = () => {
+        const next = cur() === 'light' ? 'dark' : 'light';
+        localStorage.setItem('veritai_theme', next);
+        document.documentElement.setAttribute('data-theme', next);
+        sync();
+      };
+    })();
+
+    async function checkMember() {
+      const r = await fetch(API + '/api/me', { credentials: 'include' });
+      const me = await r.json();
+      if (me.user_type !== 'member') {
+        document.getElementById('prof-err').textContent = 'Sign in with email or phone to use profile and history.';
+        document.getElementById('p-save').disabled = true;
+        document.getElementById('p-name').disabled = true;
+        return null;
+      }
+      return me;
+    }
+
+    async function loadProfile() {
+      const me = await checkMember();
+      if (!me) return;
+      const r = await fetch(API + '/api/user/profile', { credentials: 'include' });
+      if (!r.ok) return;
+      const p = await r.json();
+      document.getElementById('p-email').textContent = p.email || '—';
+      document.getElementById('p-phone').textContent = p.phone || '—';
+      document.getElementById('p-name').value = p.display_name || '';
+    }
+
+    document.getElementById('p-save').onclick = async () => {
+      document.getElementById('prof-err').textContent = '';
+      try {
+        const r = await fetch(API + '/api/user/profile', {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ display_name: document.getElementById('p-name').value.trim() }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Save failed');
+        alert('Profile updated.');
+      } catch (e) {
+        document.getElementById('prof-err').textContent = e.message;
+      }
+    };
+
+    loadProfile();
+  </script>
+</body>
+</html>

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VeritAI — Truth in every headline</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0b;
+      --text: #f0ede8;
+      --muted: #9b9794;
+      --accent: #e8c97d;
+      --card: rgba(255,255,255,0.04);
+      --border: rgba(255,255,255,0.08);
+    }
+    :root[data-theme='light'] {
+      --bg: #f6f7fb;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #c9a94a;
+      --card: rgba(15,23,42,0.04);
+      --border: rgba(15,23,42,0.12);
+    }
+    body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+    .topbar {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      right: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .topbar > * { pointer-events: auto; }
+    .themeBtn {
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--bg) 88%, var(--card));
+      color: var(--text);
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: 'DM Sans', sans-serif;
+      backdrop-filter: blur(10px);
+    }
+
+    .logo {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      margin-bottom: 48px;
+    }
+    .logo span { color: var(--accent); }
+    .carousel-wrap {
+      width: min(640px, 100%);
+      height: 120px;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 40px;
+    }
+    .carousel-track {
+      display: flex;
+      transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .slide {
+      min-width: 100%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 0 16px;
+    }
+    .slide p {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(1.15rem, 3.5vw, 1.65rem);
+      font-style: italic;
+      font-weight: 400;
+      line-height: 1.45;
+      color: var(--text);
+    }
+    .slide .lang {
+      display: block;
+      font-family: 'DM Sans', sans-serif;
+      font-style: normal;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+    .dots {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 48px;
+    }
+    .dots button {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      border: none;
+      background: #333;
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.2s, transform 0.2s;
+    }
+    .dots button.active {
+      background: var(--accent);
+      transform: scale(1.15);
+    }
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px 40px;
+      background: var(--accent);
+      color: var(--bg);
+      font-weight: 600;
+      font-size: 15px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: filter 0.2s, transform 0.15s;
+    }
+    .cta:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    footer {
+      position: fixed;
+      bottom: 20px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div style="font-family:'Playfair Display', Georgia, serif; font-weight:900; letter-spacing:-0.02em; font-size:20px;">
+      Verit<span style="color:var(--accent);">AI</span>
+    </div>
+    <button type="button" class="themeBtn" id="themeBtn">Light mode</button>
+  </div>
+
+  <div class="logo" aria-hidden="true">Verit<span>AI</span></div>
+
+  <div class="carousel-wrap" aria-live="polite">
+    <div class="carousel-track" id="track">
+      <div class="slide">
+        <div>
+          <span class="lang">English</span>
+          <p>The truth behind the headline — verified in seconds.</p>
+        </div>
+      </div>
+      <div class="slide">
+        <div>
+          <span class="lang">हिन्दी</span>
+          <p>हर सुर्ख़ी के पीछे की सच्चाई — पल भर में जाँच।</p>
+        </div>
+      </div>
+      <div class="slide">
+        <div>
+          <span class="lang">বাংলা</span>
+          <p>শিরোনামের আড়ালে সত্যি কী — মুহূর্তেই যাচাই।</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dots" id="dots"></div>
+
+  <a class="cta" href="auth.html">Get started</a>
+
+  <footer>VeritAI helps you verify headlines with sources and confidence.</footer>
+
+  <script>
+    (function() {
+      const key = 'veritai_theme';
+      const cur = () => localStorage.getItem(key) || 'dark';
+      const apply = (t) => {
+        document.documentElement.setAttribute('data-theme', t);
+        localStorage.setItem(key, t);
+        const b = document.getElementById('themeBtn');
+        if (b) b.textContent = (t === 'light') ? 'Dark mode' : 'Light mode';
+      };
+      apply(cur());
+      const btn = document.getElementById('themeBtn');
+      if (btn) btn.onclick = () => apply(cur() === 'light' ? 'dark' : 'light');
+    })();
+
+    (function () {
+      const track = document.getElementById('track');
+      const dotsEl = document.getElementById('dots');
+      const n = 3;
+      let i = 0;
+      for (let d = 0; d < n; d++) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('aria-label', 'Slide ' + (d + 1));
+        if (d === 0) b.classList.add('active');
+        b.addEventListener('click', () => { go(d); resetTimer(); });
+        dotsEl.appendChild(b);
+      }
+      const dotButtons = dotsEl.querySelectorAll('button');
+      function go(j) {
+        i = j;
+        track.style.transform = 'translateX(-' + (j * 100) + '%)';
+        dotButtons.forEach((btn, k) => btn.classList.toggle('active', k === j));
+      }
+      function next() { go((i + 1) % n); }
+      let timer = setInterval(next, 5000);
+      function resetTimer() {
+        clearInterval(timer);
+        timer = setInterval(next, 5000);
+      }
+    })();
+  </script>
+</body>
+</html>
