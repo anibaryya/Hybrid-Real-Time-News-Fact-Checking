@@ -14,3 +14,4 @@ Pillow>=10.0.0
 pytesseract>=0.3.10
 SpeechRecognition>=3.10.0
 twilio>=9.0.0
+gunicorn
