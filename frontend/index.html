@@ -140,9 +140,7 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 // Same origin when served from Flask; fallback for file://
-const API_BASE = window.location.protocol === 'file:'
-  ? 'http://127.0.0.1:5000'
-  : window.location.origin;
+const API_BASE = location.origin;
 
 // ── Icons ────────────────────────────────────────────────────
 const Icon = ({ d, size = 16, stroke = "currentColor", fill = "none", strokeWidth = 1.5 }) => (
