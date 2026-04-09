@@ -37,7 +37,10 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 
+from flask import Flask, request, jsonify, send_from_directory, session, abort
+
 app = Flask(__name__)
+
 @app.route("/")
 def home():
     return "Working 🚀"
