@@ -883,7 +883,7 @@ def serve_landing():
     try:
         return send_from_directory(FRONTEND_DIR, "landing.html")
     except Exception as e:
-        return f"Backend running 🚀 (Error loading landing page: {str(e)})"
+        return f"Backend running 🚀 (Error: {str(e)})"
 
 
 @app.route("/<path:fname>")
