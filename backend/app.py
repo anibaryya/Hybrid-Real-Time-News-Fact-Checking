@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 
 app = Flask(__name__)
+@app.route("/")
+def home():
+    return "Working 🚀"
 # Use a stable fallback so sessions survive backend restarts in local/dev runs.
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or "veritai-local-dev-secret-change-me"
 app.config.update(
