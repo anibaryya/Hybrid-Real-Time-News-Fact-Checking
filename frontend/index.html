@@ -141,6 +141,7 @@ const { useState, useEffect, useRef, useCallback } = React;
 
 // Same origin when served from Flask; fallback for file://
 const API_BASE = location.origin;
+const IS_LOCAL = ['127.0.0.1', 'localhost'].includes(location.hostname);
 
 // ── Icons ────────────────────────────────────────────────────
 const Icon = ({ d, size = 16, stroke = "currentColor", fill = "none", strokeWidth = 1.5 }) => (
@@ -1195,8 +1196,9 @@ function App() {
       credentials: 'include',
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) throw new Error(`Server error ${res.status}`);
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+    return data;
   }, []);
 
   useEffect(() => {
@@ -1267,10 +1269,30 @@ function App() {
       setNeedsClarification(data.followup_question || null);
       setFollowupYesPrompt(data.followup_yes_prompt || null);
     } catch (err) {
-      setError('Cannot connect to backend right now. Showing demo result.');
-      await new Promise(r => setTimeout(r, 800));
-      setResult(generateMockResult(inputData));
-      setBackendMode(false);
+      // Retry once (helps on cold starts / transient deploy wake-up).
+      try {
+        await fetch(`${API_BASE}/api/ping`, { credentials: 'include', signal: AbortSignal.timeout(45000) });
+        const data2 = await tryBackendAnalyze(inputData, 120000);
+        setBackendMode(true);
+        const toScore = (v) => v != null ? Math.round(v * 100) : null;
+        setResult({
+          verdict:     data2.final_label,
+          confidence:  data2.confidence,
+          certainty:   data2.certainty,
+          summary:     data2.reason || '',
+          sources:     data2.articles || [],
+          bert_score:  data2.scores ? toScore(data2.scores.bert)  : null,
+          tfidf_score: data2.scores ? toScore(data2.scores.tfidf) : null,
+          llm_score:   data2.scores ? toScore(data2.scores.judge) : null,
+        });
+        setNeedsClarification(data2.followup_question || null);
+        setFollowupYesPrompt(data2.followup_yes_prompt || null);
+      } catch (retryErr) {
+        setError(`${retryErr?.message || 'Cannot connect to backend right now.'} Showing demo result.`);
+        await new Promise(r => setTimeout(r, 800));
+        setResult(generateMockResult(inputData));
+        setBackendMode(false);
+      }
     } finally {
       setLoading(false);
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
@@ -1329,8 +1351,14 @@ function App() {
             display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--uncertain)'
           }}>
             <Icon d={Icons.info} size={16} stroke="var(--uncertain)" />
-            Demo mode — API unreachable. From the project folder run <code style={{ fontSize: 12 }}>python backend/app.py</code> and open
-            {' '}<a href="http://127.0.0.1:5000/index.html" style={{ color: 'var(--accent)' }}>http://127.0.0.1:5000/index.html</a> (same-origin session and CORS).
+            {IS_LOCAL ? (
+              <>
+                Demo mode — API unreachable. From the project folder run <code style={{ fontSize: 12 }}>python backend/app.py</code> and open
+                {' '}<a href="http://127.0.0.1:5000/index.html" style={{ color: 'var(--accent)' }}>http://127.0.0.1:5000/index.html</a>.
+              </>
+            ) : (
+              <>Backend is temporarily unavailable or waking up. You can continue in demo mode.</>
+            )}
           </div>
         )}
 
