@@ -41,9 +41,7 @@ from flask import Flask, request, jsonify, send_from_directory, session, abort
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "Working 🚀"
+
 # Use a stable fallback so sessions survive backend restarts in local/dev runs.
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or "veritai-local-dev-secret-change-me"
 app.config.update(
@@ -882,7 +880,10 @@ def news_by_genre():
 # ── Static frontend ───────────────────────────────────────────
 @app.route("/")
 def serve_landing():
-    return send_from_directory(FRONTEND_DIR, "landing.html")
+    try:
+        return send_from_directory(FRONTEND_DIR, "landing.html")
+    except Exception as e:
+        return "Backend running but frontend not found 🚀"
 
 
 @app.route("/<path:fname>")
