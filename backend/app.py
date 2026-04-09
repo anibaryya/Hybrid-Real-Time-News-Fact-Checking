@@ -880,25 +880,32 @@ def news_by_genre():
 # ── Static frontend ───────────────────────────────────────────
 @app.route("/")
 def serve_landing():
-    index_path = os.path.join(FRONTEND_DIR, "landing.html")
-
-    if os.path.exists(index_path):
+    try:
         return send_from_directory(FRONTEND_DIR, "landing.html")
-
-    return "Backend running 🚀 (frontend not found)"
+    except Exception as e:
+        return f"Backend running 🚀 (Error loading landing page: {str(e)})"
 
 
 @app.route("/<path:fname>")
 def serve_frontend(fname):
-    if fname.startswith("api/"):
-        abort(404)
-    safe = os.path.normpath(fname).lstrip(".\\/")
-    full = os.path.join(FRONTEND_DIR, safe)
-    if not full.startswith(FRONTEND_DIR):
-        abort(404)
-    if os.path.isfile(full):
-        return send_from_directory(FRONTEND_DIR, safe)
-    abort(404)
+    try:
+        if fname.startswith("api/"):
+            abort(404)
+
+        safe = os.path.normpath(fname).lstrip(".\\/")
+        full = os.path.join(FRONTEND_DIR, safe)
+
+        if not full.startswith(FRONTEND_DIR):
+            abort(404)
+
+        if os.path.isfile(full):
+            return send_from_directory(FRONTEND_DIR, safe)
+
+        # ✅ fallback → send landing page instead of crash
+        return send_from_directory(FRONTEND_DIR, "landing.html")
+
+    except Exception as e:
+        return f"Error loading page: {str(e)}", 500
 
 
 if __name__ == "__main__":
