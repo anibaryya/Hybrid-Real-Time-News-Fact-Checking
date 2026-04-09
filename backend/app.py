@@ -40,6 +40,13 @@ FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fr
 from flask import Flask, request, jsonify, send_from_directory, session, abort
 
 app = Flask(__name__)
+@app.route("/")
+def landing():
+    return send_from_directory(FRONTEND_DIR, "landing.html")
+
+@app.route("/index.html")
+def index():
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
 
 # Use a stable fallback so sessions survive backend restarts in local/dev runs.
@@ -888,25 +895,20 @@ def serve_landing():
 
 @app.route("/<path:fname>")
 def serve_frontend(fname):
-    try:
-        if fname.startswith("api/"):
-            abort(404)
+    if fname.startswith("api/"):
+        abort(404)
 
-        safe = os.path.normpath(fname).lstrip(".\\/")
-        full = os.path.join(FRONTEND_DIR, safe)
+    safe = os.path.normpath(fname).lstrip(".\\/")
+    full = os.path.join(FRONTEND_DIR, safe)
 
-        if not full.startswith(FRONTEND_DIR):
-            abort(404)
+    if not full.startswith(FRONTEND_DIR):
+        abort(404)
 
-        if os.path.isfile(full):
-            return send_from_directory(FRONTEND_DIR, safe)
+    if os.path.isfile(full):
+        return send_from_directory(FRONTEND_DIR, safe)
 
-        # ✅ fallback → send landing page instead of crash
-        return send_from_directory(FRONTEND_DIR, "landing.html")
-
-    except Exception as e:
-        return f"Error loading page: {str(e)}", 500
-
+    # fallback to landing page
+    return send_from_directory(FRONTEND_DIR, "landing.html")
 
 if __name__ == "__main__":
     logger.info("Starting VeritAI backend — open http://127.0.0.1:5000/")
