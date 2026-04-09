@@ -59,7 +59,9 @@ app.config.update(
 CORS(
     app,
     supports_credentials=True,
-    resources={r"/api/*": {"origins": ["https://hybrid-real-time-news-fact-checking-production.up.railway.app/"]}},
+    # Railway/production-friendly: allow origins from env or any origin by default.
+    # Example env: CORS_ORIGINS=https://your-frontend.up.railway.app,https://your-custom-domain.com
+    resources={r"/api/*": {"origins": [o.strip() for o in (os.getenv("CORS_ORIGINS", "*")).split(",") if o.strip()]}},
 )
 
 MAX_TEXT_LENGTH = 5000
@@ -911,5 +913,5 @@ def serve_frontend(fname):
     return send_from_directory(FRONTEND_DIR, "landing.html")
 
 if __name__ == "__main__":
-    logger.info("Starting VeritAI backend — open https://hybrid-real-time-news-fact-checking-production.up.railway.app/")
+    logger.info("Starting VeritAI backend — open http://127.0.0.1:5000/")
     app.run(debug=True, port=5000)

@@ -1181,8 +1181,27 @@ function App() {
   const [me, setMe] = useState({ user_type: null });
   const resultRef = useRef(null);
 
+  const tryBackendAnalyze = useCallback(async (inputData, timeoutMs = 120000) => {
+    const form = new FormData();
+    if (inputData.mode === 'url') {
+      form.append('url', inputData.text);
+    } else {
+      form.append('text', inputData.text);
+    }
+    form.append('input_mode', inputData.mode || 'text');
+    const res = await fetch(`${API_BASE}/api/analyze-news`, {
+      method: 'POST',
+      body: form,
+      credentials: 'include',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    return res.json();
+  }, []);
+
   useEffect(() => {
-    fetch(`${API_BASE}/api/ping`, { credentials: 'include', signal: AbortSignal.timeout(8000) })
+    // Railway cold starts can exceed short timeouts.
+    fetch(`${API_BASE}/api/ping`, { credentials: 'include', signal: AbortSignal.timeout(45000) })
       .then(r => { if (r.ok) setBackendMode(true); })
       .catch(() => {});
   }, []);
@@ -1229,55 +1248,34 @@ function App() {
     setFollowupChoice(null);
 
     try {
-      if (backendMode) {
-        const form = new FormData();
-        if (inputData.mode === 'url') {
-          form.append('url', inputData.text);
-        } else {
-          form.append('text', inputData.text);
-        }
-        form.append('input_mode', inputData.mode || 'text');
-        const res = await fetch(`${API_BASE}/api/analyze-news`, {
-          method: 'POST',
-          body: form,
-          credentials: 'include',
-          signal: AbortSignal.timeout(120000),
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
+      // Always try backend first (helps recover from cold starts after initial ping failure).
+      const data = await tryBackendAnalyze(inputData, 120000);
+      setBackendMode(true);
 
-        // Normalize Flask response fields to what ResultCard expects
-        const toScore = (v) => v != null ? Math.round(v * 100) : null;
-        setResult({
-          verdict:     data.final_label,
-          confidence:  data.confidence,
-          certainty:   data.certainty,
-          summary:     data.reason || '',
-          sources:     data.articles || [],
-          bert_score:  data.scores ? toScore(data.scores.bert)  : null,
-          tfidf_score: data.scores ? toScore(data.scores.tfidf) : null,
-          llm_score:   data.scores ? toScore(data.scores.judge) : null,
-        });
-        setNeedsClarification(data.followup_question || null);
-        setFollowupYesPrompt(data.followup_yes_prompt || null);
-      } else {
-        await new Promise(r => setTimeout(r, 3200));
-        setResult(generateMockResult(inputData));
-      }
+      // Normalize Flask response fields to what ResultCard expects
+      const toScore = (v) => v != null ? Math.round(v * 100) : null;
+      setResult({
+        verdict:     data.final_label,
+        confidence:  data.confidence,
+        certainty:   data.certainty,
+        summary:     data.reason || '',
+        sources:     data.articles || [],
+        bert_score:  data.scores ? toScore(data.scores.bert)  : null,
+        tfidf_score: data.scores ? toScore(data.scores.tfidf) : null,
+        llm_score:   data.scores ? toScore(data.scores.judge) : null,
+      });
+      setNeedsClarification(data.followup_question || null);
+      setFollowupYesPrompt(data.followup_yes_prompt || null);
     } catch (err) {
-      if (backendMode) {
-        setError('Cannot connect to Flask backend. Switching to demo mode.');
-        await new Promise(r => setTimeout(r, 2000));
-        setResult(generateMockResult(inputData));
-        setBackendMode(false);
-      } else {
-        setError('Something went wrong. Please try again.');
-      }
+      setError('Cannot connect to backend right now. Showing demo result.');
+      await new Promise(r => setTimeout(r, 800));
+      setResult(generateMockResult(inputData));
+      setBackendMode(false);
     } finally {
       setLoading(false);
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     }
-  }, [backendMode]);
+  }, [tryBackendAnalyze]);
 
   const member = me && me.user_type === 'member';
 
