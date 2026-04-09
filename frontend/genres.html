@@ -80,9 +80,7 @@
   </div>
 
   <script>
-    const API = (location.protocol === 'file:' || !location.port)
-      ? 'http://127.0.0.1:5000'
-      : location.origin;
+    const API = location.origin;
     (function () {
       const saved = localStorage.getItem('veritai_theme') || 'dark';
       document.documentElement.setAttribute('data-theme', saved);
