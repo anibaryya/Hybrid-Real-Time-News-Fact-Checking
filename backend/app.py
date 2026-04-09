@@ -59,7 +59,7 @@ app.config.update(
 CORS(
     app,
     supports_credentials=True,
-    resources={r"/api/*": {"origins": ["http://127.0.0.1:5000", "http://localhost:5000"]}},
+    resources={r"/api/*": {"origins": ["https://hybrid-real-time-news-fact-checking-production.up.railway.app/"]}},
 )
 
 MAX_TEXT_LENGTH = 5000
@@ -911,5 +911,5 @@ def serve_frontend(fname):
     return send_from_directory(FRONTEND_DIR, "landing.html")
 
 if __name__ == "__main__":
-    logger.info("Starting VeritAI backend — open http://127.0.0.1:5000/")
+    logger.info("Starting VeritAI backend — open https://hybrid-real-time-news-fact-checking-production.up.railway.app/")
     app.run(debug=True, port=5000)
