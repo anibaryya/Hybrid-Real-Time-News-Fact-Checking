@@ -142,6 +142,33 @@ const { useState, useEffect, useRef, useCallback } = React;
 // Same origin when served from Flask; fallback for file://
 const API_BASE = location.origin;
 const IS_LOCAL = ['127.0.0.1', 'localhost'].includes(location.hostname);
+const MOBILE_BREAKPOINT = 980;
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => ctrl.abort(), timeoutMs);
+  const { signal, ...rest } = options || {};
+
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
+
+  return fetch(url, { ...rest, signal: ctrl.signal })
+    .finally(() => clearTimeout(timeoutId));
+}
+
+function useIsMobile(breakpoint = MOBILE_BREAKPOINT) {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [breakpoint]);
+
+  return isMobile;
+}
 
 // ── Icons ────────────────────────────────────────────────────
 const Icon = ({ d, size = 16, stroke = "currentColor", fill = "none", strokeWidth = 1.5 }) => (
@@ -208,20 +235,25 @@ function Ticker() {
 }
 
 // ── Header ─────────────────────────────────────────────────────
-function Header({ me, backendMode, theme, onToggleTheme }) {
+function Header({ me, backendMode, backendChecked, theme, onToggleTheme, isMobile }) {
   const guest = me && me.user_type === 'guest';
   const member = me && me.user_type === 'member';
+  const statusLabel = !backendChecked ? 'CHECKING' : backendMode ? 'API LIVE' : 'OFFLINE';
+  const statusColor = !backendChecked ? 'var(--uncertain)' : backendMode ? 'var(--real)' : 'var(--fake)';
   return (
     <header>
       <Ticker />
       <div style={{
         borderBottom: '1px solid var(--border)',
-        padding: '0 32px',
+        padding: isMobile ? '12px 16px' : '0 32px',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        height: 64, flexWrap: 'wrap', gap: 12
+        minHeight: isMobile ? 76 : 64, flexWrap: 'wrap', gap: 12
       }}>
-        <div style={{ flex: 1, minWidth: 24 }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 24, display: isMobile ? 'none' : 'block' }} />
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 20, flexWrap: 'wrap',
+          width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'center' : 'flex-end'
+        }}>
           {member && (
             <>
               <a href="account.html" style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}>Profile</a>
@@ -247,12 +279,13 @@ function Header({ me, backendMode, theme, onToggleTheme }) {
             display: 'flex', alignItems: 'center', gap: 6,
             fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)'
           }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: backendMode ? 'var(--real)' : 'var(--uncertain)', animation: 'blink 2s infinite' }} />
-            {backendMode ? 'API LIVE' : 'OFFLINE'}
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor, animation: 'blink 2s infinite' }} />
+            {statusLabel}
           </div>
           <div style={{
             fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)',
-            borderLeft: '1px solid var(--border)', paddingLeft: 20
+            borderLeft: isMobile ? 'none' : '1px solid var(--border)',
+            paddingLeft: isMobile ? 0 : 20
           }}>
             BERT + LLaMA3 + APIs
           </div>
@@ -263,7 +296,7 @@ function Header({ me, backendMode, theme, onToggleTheme }) {
 }
 
 // ── Input Panel ────────────────────────────────────────────────
-function InputPanel({ onSubmit, loading }) {
+function InputPanel({ onSubmit, loading, isMobile }) {
   const [mode, setMode] = useState('text');
   const [textDraft, setTextDraft] = useState('');
   const [urlDraft, setUrlDraft] = useState('');
@@ -305,7 +338,7 @@ function InputPanel({ onSubmit, loading }) {
     }}>
       <div style={{
         display: 'flex', borderBottom: '1px solid var(--border)',
-        padding: '0 24px', gap: 0, flexWrap: 'wrap', alignItems: 'center'
+        padding: isMobile ? '0 16px' : '0 24px', gap: 0, flexWrap: 'wrap', alignItems: 'center'
       }}>
         {[
           { id: 'text', label: 'Text', icon: Icons.clipboard },
@@ -347,7 +380,7 @@ function InputPanel({ onSubmit, loading }) {
         </div>
       </div>
 
-      <div style={{ padding: '20px 24px 0' }}>
+      <div style={{ padding: isMobile ? '18px 16px 0' : '20px 24px 0' }}>
         {mode === 'text' && (
           <textarea
             value={textDraft}
@@ -363,7 +396,13 @@ function InputPanel({ onSubmit, loading }) {
           />
         )}
         {mode === 'url' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 20 }}>
+          <div style={{
+            display: 'flex',
+            alignItems: isMobile ? 'stretch' : 'center',
+            flexDirection: isMobile ? 'column' : 'row',
+            gap: 12,
+            paddingBottom: 20
+          }}>
             <Icon d={Icons.link} size={16} stroke="var(--text3)" />
             <input
               type="url"
@@ -372,7 +411,7 @@ function InputPanel({ onSubmit, loading }) {
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
               style={{
-                flex: 1, background: 'none', border: 'none',
+                flex: 1, width: '100%', background: 'none', border: 'none',
                 fontFamily: 'var(--font-mono)', fontSize: 14,
                 color: 'var(--text)', caretColor: 'var(--accent)',
               }}
@@ -382,10 +421,10 @@ function InputPanel({ onSubmit, loading }) {
       </div>
 
       <div style={{
-        padding: '12px 24px 20px',
+        padding: isMobile ? '12px 16px 16px' : '12px 24px 20px',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12
       }}>
-        <span style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+        <span style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--font-mono)', width: isMobile ? '100%' : 'auto' }}>
           {mode === 'text' && textDraft.length > 0 ? `${textDraft.length} chars · ` : ''}
           {mode === 'url' && urlDraft.length > 0 ? `${urlDraft.length} chars · ` : ''}
           {(mode === 'text' || mode === 'url') ? '⌘ + Enter to verify' : ''}
@@ -394,10 +433,10 @@ function InputPanel({ onSubmit, loading }) {
           style={{
             background: ((mode === 'text' && textDraft.trim()) || (mode === 'url' && urlDraft.trim())) && !busy ? 'var(--accent)' : 'var(--bg4)',
             color: ((mode === 'text' && textDraft.trim()) || (mode === 'url' && urlDraft.trim())) && !busy ? '#0a0a0b' : 'var(--text3)',
-            border: 'none', borderRadius: 10, padding: '12px 28px',
+            border: 'none', borderRadius: 10, padding: '12px 28px', width: isMobile ? '100%' : 'auto',
             fontFamily: 'var(--font-body)', fontSize: 14, fontWeight: 600,
             cursor: ((mode === 'text' && textDraft.trim()) || (mode === 'url' && urlDraft.trim())) && !busy ? 'pointer' : 'not-allowed',
-            display: 'flex', alignItems: 'center', gap: 10,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
             transition: 'all 0.2s',
           }}>
           {busy ? (
@@ -476,13 +515,12 @@ function EvidenceSourceItem({ s, i, verdict }) {
     if (!s.url) return;
     setLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/api/article-preview`, {
+      const r = await fetchWithTimeout(`${API_BASE}/api/article-preview`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: s.url }),
-        signal: AbortSignal.timeout(45000),
-      });
+      }, 45000);
       const d = await r.json();
       if (r.ok && d.excerpt) setExcerpt(d.excerpt);
       else if (d.error) setExcerpt(`${excerpt}\n\n(${d.error})`);
@@ -544,7 +582,7 @@ function EvidenceSourceItem({ s, i, verdict }) {
 }
 
 // ── Result Card ────────────────────────────────────────────────
-function ResultCard({ result }) {
+function ResultCard({ result, isMobile }) {
   const { verdict, confidence, certainty, bert_score, tfidf_score, llm_score,
     summary, sources, query_used, processing_time } = result;
 
@@ -567,43 +605,43 @@ function ResultCard({ result }) {
     }}>
       {/* Top verdict strip */}
       <div style={{
-        padding: '32px 32px 28px',
+        padding: isMobile ? '22px 18px 20px' : '32px 32px 28px',
         borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'flex-start', gap: 24,
         flexWrap: 'wrap'
       }}>
         {/* Pulse indicator */}
-        <div style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
+        <div style={{ position: 'relative', width: isMobile ? 48 : 56, height: isMobile ? 48 : 56, flexShrink: 0 }}>
           <div style={{
             position: 'absolute', inset: 0, borderRadius: '50%',
             background: verdictConfig.color, opacity: 0.15,
             animation: 'pulse-ring 2s ease-out infinite'
           }} />
           <div style={{
-            width: 56, height: 56, borderRadius: '50%',
+            width: isMobile ? 48 : 56, height: isMobile ? 48 : 56, borderRadius: '50%',
             background: verdictConfig.color + '18',
             border: `2px solid ${verdictConfig.color}40`,
             display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}>
             <div style={{
-              width: 20, height: 20, borderRadius: '50%',
+              width: isMobile ? 18 : 20, height: isMobile ? 18 : 20, borderRadius: '50%',
               background: verdictConfig.color
             }} />
           </div>
         </div>
 
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: isMobile ? '100%' : 0 }}>
           <div style={{ marginBottom: 10 }}>
             <VerdictBadge verdict={verdict} large />
           </div>
-          <p style={{ fontSize: 14, color: 'var(--text2)', lineHeight: 1.6, maxWidth: 580 }}>
+          <p style={{ fontSize: isMobile ? 13 : 14, color: 'var(--text2)', lineHeight: 1.6, maxWidth: 580 }}>
             {summary}
           </p>
         </div>
 
-        <div style={{ textAlign: 'right' }}>
+        <div style={{ textAlign: isMobile ? 'left' : 'right', width: isMobile ? '100%' : 'auto' }}>
           <div style={{
-            fontFamily: 'var(--font-display)', fontSize: 48, fontWeight: 900,
+            fontFamily: 'var(--font-display)', fontSize: isMobile ? 40 : 48, fontWeight: 900,
             color: verdictConfig.color, lineHeight: 1
           }}>{confidence}%</div>
           <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
@@ -620,11 +658,11 @@ function ResultCard({ result }) {
       </div>
 
       {/* Model scores */}
-      <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ padding: isMobile ? '20px 18px' : '24px 32px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)', letterSpacing: 2, marginBottom: 16 }}>
           MODEL ANALYSIS
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3,1fr)', gap: 16 }}>
           {[
             { label: 'BERT (40%)', score: bert_score,  color: '#818cf8', desc: 'Context & semantics' },
             { label: 'TF-IDF (20%)', score: tfidf_score, color: '#38bdf8', desc: 'Pattern detection' },
@@ -659,7 +697,7 @@ function ResultCard({ result }) {
 
       {/* Evidence sources */}
       {sources && sources.length > 0 && (
-        <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ padding: isMobile ? '20px 18px' : '24px 32px', borderBottom: '1px solid var(--border)' }}>
           <div style={{
             fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
             letterSpacing: 2, marginBottom: 16,
@@ -678,7 +716,7 @@ function ResultCard({ result }) {
 
       {/* Meta info */}
       <div style={{
-        padding: '16px 32px', display: 'flex', gap: 24, flexWrap: 'wrap',
+        padding: isMobile ? '16px 18px' : '16px 32px', display: 'flex', gap: 24, flexWrap: 'wrap',
         alignItems: 'center'
       }}>
         {query_used && (
@@ -702,7 +740,7 @@ function ResultCard({ result }) {
 }
 
 // ── Loading Skeleton ────────────────────────────────────────────
-function LoadingSkeleton() {
+function LoadingSkeleton({ isMobile }) {
   const steps = [
     { label: 'Translating & preprocessing', done: false, active: true },
     { label: 'Running BERT model', done: false, active: false },
@@ -722,7 +760,7 @@ function LoadingSkeleton() {
   return (
     <div className="fade-in" style={{
       border: '1px solid var(--border)', borderRadius: 16,
-      background: 'var(--bg2)', padding: '32px'
+      background: 'var(--bg2)', padding: isMobile ? '20px 18px' : '32px'
     }}>
       <div style={{
         fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)',
@@ -761,7 +799,7 @@ function LoadingSkeleton() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3,1fr)', gap: 12 }}>
         {[1, 2, 3].map(i => (
           <div key={i} className="shimmer-skeleton" style={{ height: 80, borderRadius: 10 }} />
         ))}
@@ -771,7 +809,7 @@ function LoadingSkeleton() {
 }
 
 // ── How It Works ───────────────────────────────────────────────
-function HowItWorks() {
+function HowItWorks({ isMobile }) {
   const steps = [
     { icon: Icons.clipboard, label: 'Input', desc: 'Paste article text or verify directly from a news URL' },
     { icon: Icons.brain, label: 'ML Analysis', desc: 'BERT + TF-IDF processes the claim' },
@@ -802,7 +840,7 @@ function HowItWorks() {
               }}>{String(i+1).padStart(2,'0')} {s.label.toUpperCase()}</div>
               <div style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>{s.desc}</div>
             </div>
-            {i < steps.length - 1 && (
+            {!isMobile && i < steps.length - 1 && (
               <div style={{
                 display: 'flex', alignItems: 'center', padding: '0 4px',
                 color: 'var(--text3)', fontSize: 16, flexShrink: 0
@@ -816,7 +854,7 @@ function HowItWorks() {
 }
 
 // ── Stats Bar ──────────────────────────────────────────────────
-function StatsBar() {
+function StatsBar({ isMobile }) {
   const stats = [
     { value: '94.2%', label: 'Model Accuracy' },
     { value: '4', label: 'News APIs' },
@@ -825,7 +863,7 @@ function StatsBar() {
   ];
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 12
+      display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, 1fr)', gap: 12, marginTop: 12
     }}>
       {stats.map((s, i) => (
         <div key={i} style={{
@@ -864,7 +902,7 @@ const CLARIFICATION_FIELDS = [
 ];
 
 // ── Headlines sidebar ────────────────────────────────────────
-function NewsSidebar({ geo, canPersonalize }) {
+function NewsSidebar({ geo, canPersonalize, isMobile }) {
   const [tab, setTab] = useState('top');
   const [articles, setArticles] = useState([]);
   const [emptyReason, setEmptyReason] = useState('');
@@ -880,7 +918,7 @@ function NewsSidebar({ geo, canPersonalize }) {
     const path = activeTab === 'top' ? `/api/headlines${geoQs}` : `/api/news-personalized${geoQs}`;
     setFeedLoading(true);
     setEmptyReason('');
-    fetch(`${API_BASE}${path}`, { credentials: 'include', signal: ctrl.signal })
+    fetchWithTimeout(`${API_BASE}${path}`, { credentials: 'include', signal: ctrl.signal }, 45000)
       .then(async (r) => {
         if (cancelled) return { articles: [] };
         const d = await r.json().catch(() => ({}));
@@ -943,9 +981,9 @@ function NewsSidebar({ geo, canPersonalize }) {
 
   return (
     <aside className="fade-up" style={{
-      position: 'sticky', top: 24,
+      position: isMobile ? 'static' : 'sticky', top: isMobile ? 'auto' : 24,
       border: '1px solid var(--border)', borderRadius: 16, background: 'var(--bg2)',
-      overflow: 'hidden', maxHeight: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column',
+      overflow: 'hidden', maxHeight: isMobile ? 'none' : 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column',
     }}>
       <div style={{
         padding: '16px 16px 0', fontFamily: 'var(--font-mono)', fontSize: 11,
@@ -984,7 +1022,7 @@ function NewsSidebar({ geo, canPersonalize }) {
           >
             {a.image ? (
               <img src={a.image} alt={a.title || 'Article image'} style={{
-                width: '100%', height: 120, objectFit: 'cover', borderRadius: 8, marginBottom: 8, border: '1px solid var(--border)'
+                width: '100%', height: isMobile ? 160 : 120, objectFit: 'cover', borderRadius: 8, marginBottom: 8, border: '1px solid var(--border)'
               }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             ) : null}
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', lineHeight: 1.35, marginBottom: 6 }}>
@@ -1045,6 +1083,7 @@ function generateMockResult(input) {
 
 // ── App ────────────────────────────────────────────────────────
 function App() {
+  const isMobile = useIsMobile();
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -1058,6 +1097,7 @@ function App() {
   const [geo, setGeo] = useState(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('veritai_theme') || 'dark');
   const [backendMode, setBackendMode] = useState(false);
+  const [backendChecked, setBackendChecked] = useState(false);
   const [me, setMe] = useState({ user_type: null });
   const resultRef = useRef(null);
 
@@ -1072,27 +1112,45 @@ function App() {
       form.append('context_notes', inputData.contextNotes);
     }
     form.append('input_mode', inputData.mode || 'text');
-    const res = await fetch(`${API_BASE}/api/analyze-news`, {
+    const res = await fetchWithTimeout(`${API_BASE}/api/analyze-news`, {
       method: 'POST',
       body: form,
       credentials: 'include',
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    }, timeoutMs);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
     return data;
   }, []);
 
-  useEffect(() => {
-    // Railway cold starts can exceed short timeouts.
-    fetch(`${API_BASE}/api/ping`, { credentials: 'include', signal: AbortSignal.timeout(45000) })
-      .then(r => { if (r.ok) setBackendMode(true); })
-      .catch(() => {});
+  const probeBackend = useCallback(async (timeoutMs = 45000) => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/api/ping`, { credentials: 'include' }, timeoutMs);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      setBackendMode(true);
+      return true;
+    } catch (_) {
+      setBackendMode(false);
+      return false;
+    } finally {
+      setBackendChecked(true);
+    }
   }, []);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/me`, { credentials: 'include' })
-      .then(r => r.json())
+    // Railway cold starts can exceed short timeouts.
+    probeBackend(45000);
+  }, [probeBackend]);
+
+  useEffect(() => {
+    fetchWithTimeout(`${API_BASE}/api/me`, { credentials: 'include' }, 30000)
+      .then(async (r) => {
+        const data = await r.json().catch(() => ({ user_type: null }));
+        if (r.ok) {
+          setBackendMode(true);
+          setBackendChecked(true);
+        }
+        return data;
+      })
       .then(setMe)
       .catch(() => setMe({ user_type: null }));
   }, []);
@@ -1157,24 +1215,29 @@ function App() {
     try {
       const data = await tryBackendAnalyze(inputData, 120000);
       setBackendMode(true);
+      setBackendChecked(true);
       applyBackendResult(data, suppressFollowup);
     } catch (err) {
+      const backendReachable = await probeBackend(45000);
       try {
-        await fetch(`${API_BASE}/api/ping`, { credentials: 'include', signal: AbortSignal.timeout(45000) });
+        if (!backendReachable) throw new Error('Cannot connect to backend right now.');
         const data2 = await tryBackendAnalyze(inputData, 120000);
         setBackendMode(true);
+        setBackendChecked(true);
         applyBackendResult(data2, suppressFollowup);
       } catch (retryErr) {
-        setError(`${retryErr?.message || 'Cannot connect to backend right now.'} Showing demo result.`);
+        const fallbackMessage = backendReachable
+          ? `${retryErr?.message || 'Analysis failed on the backend.'} Showing demo result.`
+          : `${retryErr?.message || 'Cannot connect to backend right now.'} Showing demo result.`;
+        setError(fallbackMessage);
         await new Promise(r => setTimeout(r, 800));
         setResult(generateMockResult(inputData));
-        setBackendMode(false);
       }
     } finally {
       setLoading(false);
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     }
-  }, [applyBackendResult, resetClarificationState, tryBackendAnalyze]);
+  }, [applyBackendResult, probeBackend, resetClarificationState, tryBackendAnalyze]);
 
   const handleClarificationFieldChange = useCallback((id, value) => {
     setClarificationAnswers(prev => ({ ...prev, [id]: value }));
@@ -1206,17 +1269,19 @@ function App() {
       <Header
         me={me}
         backendMode={backendMode}
+        backendChecked={backendChecked}
         theme={theme}
+        isMobile={isMobile}
         onToggleTheme={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
       />
 
       <main style={{
         maxWidth: showSidebar ? 1240 : 860,
         margin: '0 auto',
-        padding: '48px 24px 80px',
-        display: showSidebar ? 'grid' : 'block',
-        gridTemplateColumns: showSidebar ? 'minmax(0, 1fr) minmax(280px, 340px)' : undefined,
-        gap: showSidebar ? 28 : 0,
+        padding: isMobile ? '24px 16px 48px' : '48px 24px 80px',
+        display: showSidebar && !isMobile ? 'grid' : 'block',
+        gridTemplateColumns: showSidebar && !isMobile ? 'minmax(0, 1fr) minmax(280px, 340px)' : undefined,
+        gap: showSidebar && !isMobile ? 28 : 0,
         alignItems: 'start',
       }}>
 
@@ -1224,14 +1289,14 @@ function App() {
         {/* Hero */}
         <div className="fade-up" style={{ marginBottom: 40 }}>
           <h2 style={{
-            fontFamily: 'var(--font-display)', fontSize: 42, fontWeight: 900,
+            fontFamily: 'var(--font-display)', fontSize: isMobile ? 34 : 42, fontWeight: 900,
             lineHeight: 1.1, letterSpacing: -1.5, color: 'var(--text)',
             marginBottom: 16
           }}>
             The AI that reads<br />
             between the <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>headlines.</em>
           </h2>
-          <p style={{ fontSize: 15, color: 'var(--text2)', maxWidth: 520, lineHeight: 1.7 }}>
+          <p style={{ fontSize: 15, color: 'var(--text2)', maxWidth: isMobile ? '100%' : 520, lineHeight: 1.7 }}>
             Hybrid ML + LLM system combining BERT, TF-IDF, and real-time evidence retrieval
             to verify news authenticity with a confidence score.
           </p>
@@ -1244,7 +1309,7 @@ function App() {
         </div>
 
         {/* Demo mode notice */}
-        {!backendMode && (
+        {backendChecked && !backendMode && (
           <div className="fade-in" style={{
             background: 'var(--uncertain-bg)', border: '1px solid var(--uncertain-border)',
             borderRadius: 10, padding: '12px 16px', marginBottom: 20,
@@ -1263,7 +1328,7 @@ function App() {
         )}
 
         {/* Input */}
-        <InputPanel onSubmit={handleSubmit} loading={loading} />
+        <InputPanel onSubmit={handleSubmit} loading={loading} isMobile={isMobile} />
 
         {/* Follow-up request after initial verdict */}
         {clarificationPrompt && !loading && (
@@ -1368,25 +1433,25 @@ function App() {
         )}
 
         {/* Loading */}
-        {loading && <div style={{ marginTop: 24 }}><LoadingSkeleton /></div>}
+        {loading && <div style={{ marginTop: 24 }}><LoadingSkeleton isMobile={isMobile} /></div>}
 
         {/* Result */}
         {result && !loading && (
           <div ref={resultRef} style={{ marginTop: 24 }}>
-            <ResultCard result={result} />
+            <ResultCard result={result} isMobile={isMobile} />
           </div>
         )}
 
         {/* Stats + How it works */}
         {!loading && !result && (
           <>
-            <StatsBar />
-            <HowItWorks />
+            <StatsBar isMobile={isMobile} />
+            <HowItWorks isMobile={isMobile} />
           </>
         )}
         </div>
 
-        <NewsSidebar geo={geo} canPersonalize={member} />
+        <NewsSidebar geo={geo} canPersonalize={member} isMobile={isMobile} />
 
       </main>
     </div>
