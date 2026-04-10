@@ -70,7 +70,8 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY") or "veritai-local-dev-secret-chan
 app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_HTTPONLY=True,
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=24),
+    # Keep signed-in members logged in across browser restarts until they sign out.
+    PERMANENT_SESSION_LIFETIME=timedelta(days=3650),
 )
 CORS(
     app,
@@ -84,7 +85,6 @@ MAX_TEXT_LENGTH = 5000
 MIN_TEXT_LENGTH = 20
 
 GUEST_TTL = timedelta(minutes=30)
-MEMBER_TTL = timedelta(hours=24)
 
 
 def _normalize_analysis_result(result) -> dict:
@@ -151,7 +151,7 @@ def _normalize_analysis_result(result) -> dict:
 def _enforce_session_ttl():
     """
     - Guest sessions: expire after 30 minutes of inactivity.
-    - Member sessions (email OTP / Google): expire after 24 hours of inactivity, or manual logout.
+    - Member sessions (email OTP / Google): stay active until manual logout.
     """
     ut = session.get("user_type")
     if not ut:
@@ -162,12 +162,11 @@ def _enforce_session_ttl():
         last_seen = datetime.fromisoformat(last_seen_raw) if last_seen_raw else None
     except Exception:
         last_seen = None
-    ttl = MEMBER_TTL if ut == "member" else GUEST_TTL
-    if last_seen and (now - last_seen) > ttl:
+    if ut == "guest" and last_seen and (now - last_seen) > GUEST_TTL:
         session.clear()
         return
     session["last_seen"] = now.isoformat()
-    # Keep cookie across browser restarts up to TTL windows.
+    # Keep cookie across browser restarts; guests are still server-expired via GUEST_TTL.
     session.permanent = True
 
 
