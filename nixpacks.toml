@@ -1,0 +1,8 @@
+providers = ["python"]
+
+[variables]
+NIXPACKS_PYTHON_VERSION = "3.11"
+NIXPACKS_PYTHON_PACKAGE_MANAGER = "requirements"
+
+[start]
+cmd = "gunicorn backend.app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180"
