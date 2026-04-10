@@ -10,39 +10,34 @@ from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+sys.path.append(PROJECT_ROOT)
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+_analyze_news_impl = None
 _ANALYZE_NEWS_IMPORT_ERROR = None
-try:
-    from ml_model.model import analyze_news as _analyze_news_impl
-except Exception as exc:
-    _ANALYZE_NEWS_IMPORT_ERROR = exc
-    logger.exception("Could not import ml_model.model.analyze_news; using degraded fallback")
-
-    def analyze_news(text):
-        return {
-            "label": "UNCERTAIN",
-            "confidence": 52.0,
-            "certainty": "LOW",
-            "reason": "Analysis engine is temporarily unavailable on the server.",
-            "articles": [],
-            "scores": {"bert": None, "tfidf": None, "evidence": 0.0, "judge": None},
-            "followup_question": None,
-            "followup_yes_prompt": None,
-        }
-else:
-    analyze_news = _analyze_news_impl
 
 try:
     from backend import database as dbstore
 except:
     dbstore = None
+
+if dbstore is None or not (os.getenv("DATABASE_URL") or "").strip():
+    logger.warning("DATABASE_URL not set; starting without persistent member database features.")
+
+    class _NoopDBStore:
+        @staticmethod
+        def init_db():
+            return None
+
+    dbstore = _NoopDBStore()
 
 from flask import Flask, request, jsonify, send_from_directory, session, abort
 from flask_cors import CORS
@@ -51,7 +46,7 @@ from bs4 import BeautifulSoup
 from werkzeug.security import generate_password_hash, check_password_hash
 from psycopg2.extras import RealDictCursor
 
-FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 from flask import Flask, request, jsonify, send_from_directory, session, abort
 
@@ -87,17 +82,47 @@ MIN_TEXT_LENGTH = 20
 GUEST_TTL = timedelta(minutes=30)
 
 
-def _normalize_analysis_result(result) -> dict:
-    fallback = {
+def _degraded_analysis_result(reason: str = "Analysis engine is temporarily unavailable on the server.") -> dict:
+    return {
         "label": "UNCERTAIN",
         "confidence": 52.0,
         "certainty": "LOW",
-        "reason": "Analysis engine is temporarily unavailable. Please try again shortly.",
+        "reason": reason,
         "articles": [],
         "scores": {"bert": None, "tfidf": None, "evidence": 0.0, "judge": None},
         "followup_question": None,
         "followup_yes_prompt": None,
     }
+
+
+def _get_analyze_news_impl():
+    global _analyze_news_impl, _ANALYZE_NEWS_IMPORT_ERROR
+
+    if _analyze_news_impl is not None:
+        return _analyze_news_impl
+    if _ANALYZE_NEWS_IMPORT_ERROR is not None:
+        return None
+
+    try:
+        from ml_model.model import analyze_news as imported_impl
+    except Exception as exc:
+        _ANALYZE_NEWS_IMPORT_ERROR = exc
+        logger.exception("Could not import ml_model.model.analyze_news; using degraded fallback")
+        return None
+
+    _analyze_news_impl = imported_impl
+    return _analyze_news_impl
+
+
+def analyze_news(text):
+    impl = _get_analyze_news_impl()
+    if impl is None:
+        return _degraded_analysis_result()
+    return impl(text)
+
+
+def _normalize_analysis_result(result) -> dict:
+    fallback = _degraded_analysis_result("Analysis engine is temporarily unavailable. Please try again shortly.")
 
     if isinstance(result, dict):
         label = str(result.get("label") or fallback["label"]).upper()
@@ -767,6 +792,13 @@ def health():
         {
             "status": "ok",
             "keys": keys,
+            "analyzer_status": (
+                "degraded"
+                if _ANALYZE_NEWS_IMPORT_ERROR is not None
+                else "ready"
+                if _analyze_news_impl is not None
+                else "lazy"
+            ),
             "analyzer_import_ok": _ANALYZE_NEWS_IMPORT_ERROR is None,
         }
     ), 200
@@ -1283,4 +1315,8 @@ def serve_frontend(fname):
 
 if __name__ == "__main__":
     logger.info("Starting VeritAI backend — open http://127.0.0.1:5000/")
-    app.run(debug=True, port=5000)
+    app.run(
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "5000")),
+        debug=(os.getenv("FLASK_DEBUG") or "").strip().lower() in {"1", "true", "yes"},
+    )
